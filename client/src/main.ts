@@ -21,29 +21,23 @@ class GameScene extends Phaser.Scene {
 
   private room!: Room;
 
-  private remotePlayers: Map<string, RemotePlayer> = new Map();
+  private remotePlayers: Map<string, RemotePlayer> =
+    new Map();
 
   constructor() {
     super("GameScene");
   }
 
   async create() {
-    // Create player graphics
     this.createPlayerTexture();
 
-    // Create game world
     this.createWorld();
 
-    // Keyboard controls
-    this.cursors = this.input.keyboard!.createCursorKeys();
+    this.cursors =
+      this.input.keyboard!.createCursorKeys();
 
-    // Connect to Colyseus
     await this.connectToServer();
   }
-
-  // --------------------------------------------------
-  // CREATE PLAYER TEXTURE
-  // --------------------------------------------------
 
   private createPlayerTexture() {
     const graphics = this.add.graphics();
@@ -66,63 +60,58 @@ class GameScene extends Phaser.Scene {
     graphics.destroy();
   }
 
-  // --------------------------------------------------
-  // CREATE WORLD
-  // --------------------------------------------------
-
   private createWorld() {
-    // Temporary local player
-    this.player = this.physics.add.sprite(
-      250,
-      300,
-      "player"
-    );
+    // Temporary local player.
+    // We will make the server control this
+    // spawn position in the next step.
+    this.player =
+      this.physics.add.sprite(
+        250,
+        300,
+        "player"
+      );
 
-    // Local player color
     this.player.setTint(0xff4444);
 
-    // Don't allow player to leave screen
-    this.player.setCollideWorldBounds(true);
-
-    // Ground
-    const ground = this.add.rectangle(
-      400,
-      550,
-      800,
-      50,
-      0x333333
+    this.player.setCollideWorldBounds(
+      true
     );
 
-    // Enable physics for ground
+    const ground =
+      this.add.rectangle(
+        400,
+        550,
+        800,
+        50,
+        0x333333
+      );
+
     this.physics.add.existing(
       ground,
       true
     );
 
-    // Player ↔ ground collision
     this.physics.add.collider(
       this.player,
       ground
     );
   }
 
-  // --------------------------------------------------
-  // CONNECT TO COLYSEUS
-  // --------------------------------------------------
-
   private async connectToServer() {
     try {
-      const client = new Client(
-        "ws://localhost:2567"
-      );
+      const client =
+        new Client(
+          "ws://localhost:2567"
+        );
 
       console.log(
         "Connecting to game server..."
       );
 
-      this.room = await client.joinOrCreate(
-        "game"
-      );
+      this.room =
+        await client.joinOrCreate(
+          "game"
+        );
 
       console.log(
         "Connected to room:",
@@ -134,7 +123,6 @@ class GameScene extends Phaser.Scene {
         this.room.sessionId
       );
 
-      // Setup multiplayer events
       this.setupRoomListeners();
 
     } catch (error) {
@@ -145,15 +133,11 @@ class GameScene extends Phaser.Scene {
     }
   }
 
-  // --------------------------------------------------
-  // ROOM EVENTS
-  // --------------------------------------------------
-
   private setupRoomListeners() {
 
-    // ----------------------------------------------
+    // ----------------------------------------
     // PLAYER JOINED
-    // ----------------------------------------------
+    // ----------------------------------------
 
     this.room.onMessage(
       "playerJoined",
@@ -164,7 +148,6 @@ class GameScene extends Phaser.Scene {
           player
         );
 
-        // Ignore ourselves
         if (
           player.id ===
           this.room.sessionId
@@ -178,9 +161,9 @@ class GameScene extends Phaser.Scene {
       }
     );
 
-    // ----------------------------------------------
+    // ----------------------------------------
     // PLAYER MOVED
-    // ----------------------------------------------
+    // ----------------------------------------
 
     this.room.onMessage(
       "playerMoved",
@@ -202,9 +185,9 @@ class GameScene extends Phaser.Scene {
       }
     );
 
-    // ----------------------------------------------
+    // ----------------------------------------
     // PLAYER LEFT
-    // ----------------------------------------------
+    // ----------------------------------------
 
     this.room.onMessage(
       "playerLeft",
@@ -233,15 +216,10 @@ class GameScene extends Phaser.Scene {
     );
   }
 
-  // --------------------------------------------------
-  // CREATE REMOTE PLAYER
-  // --------------------------------------------------
-
   private createRemotePlayer(
     player: PlayerData
   ) {
 
-    // Don't create duplicate player
     if (
       this.remotePlayers.has(
         player.id
@@ -262,12 +240,10 @@ class GameScene extends Phaser.Scene {
       player.color
     );
 
-    // Keep remote player inside world
     sprite.setCollideWorldBounds(
       true
     );
 
-    // Make remote player collide with ground
     const ground =
       this.add.rectangle(
         400,
@@ -286,7 +262,6 @@ class GameScene extends Phaser.Scene {
       ground
     );
 
-    // Store remote player
     this.remotePlayers.set(
       player.id,
       {
@@ -296,10 +271,6 @@ class GameScene extends Phaser.Scene {
     );
   }
 
-  // --------------------------------------------------
-  // UPDATE
-  // --------------------------------------------------
-
   update() {
 
     if (!this.player) {
@@ -308,10 +279,7 @@ class GameScene extends Phaser.Scene {
 
     const speed = 200;
 
-    // ----------------------------------------------
     // LEFT
-    // ----------------------------------------------
-
     if (
       this.cursors.left.isDown
     ) {
@@ -322,10 +290,7 @@ class GameScene extends Phaser.Scene {
 
     }
 
-    // ----------------------------------------------
     // RIGHT
-    // ----------------------------------------------
-
     else if (
       this.cursors.right.isDown
     ) {
@@ -336,22 +301,15 @@ class GameScene extends Phaser.Scene {
 
     }
 
-    // ----------------------------------------------
     // STOP
-    // ----------------------------------------------
-
     else {
 
       this.player.setVelocityX(
         0
       );
-
     }
 
-    // ----------------------------------------------
     // JUMP
-    // ----------------------------------------------
-
     if (
       this.cursors.up.isDown &&
       this.player.body &&
@@ -366,10 +324,8 @@ class GameScene extends Phaser.Scene {
       );
     }
 
-    // ----------------------------------------------
-    // SEND POSITION TO SERVER
-    // ----------------------------------------------
-
+    // Send player position
+    // to the server.
     if (this.room) {
 
       this.room.send(
@@ -383,9 +339,9 @@ class GameScene extends Phaser.Scene {
   }
 }
 
-// ==================================================
+// ==========================================
 // PHASER CONFIGURATION
-// ==================================================
+// ==========================================
 
 const config:
   Phaser.Types.Core.GameConfig = {
@@ -416,10 +372,8 @@ const config:
   scene: GameScene
 };
 
-// ==================================================
+// ==========================================
 // START GAME
-// ==================================================
+// ==========================================
 
-new Phaser.Game(
-  config
-);
+new Phaser.Game(config);
