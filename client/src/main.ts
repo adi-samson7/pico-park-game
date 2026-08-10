@@ -140,6 +140,28 @@ class GameScene extends Phaser.Scene {
     // ----------------------------------------
 
     this.room.onMessage(
+    "playerJoinedSelf",
+    (player: PlayerData) => {
+
+    console.log(
+      "My player data:",
+      player
+    );
+
+    // Set our actual spawn position
+    this.player.setPosition(
+      player.x,
+      player.y
+    );
+
+    // Set our assigned color
+    this.player.setTint(
+      player.color
+    );
+  }
+);
+
+    this.room.onMessage(
       "playerJoined",
       (player: PlayerData) => {
 

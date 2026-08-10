@@ -144,6 +144,10 @@ export class GameRoom extends Room {
       client.sessionId,
       player
     );
+    client.send(
+      "playerJoinedSelf",
+      player
+    );
 
     console.log(
       `Player ${
