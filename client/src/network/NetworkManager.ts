@@ -6,6 +6,9 @@ export class NetworkManager {
 
   public room!: Room;
 
+  private lookupServer =
+    "http://localhost:3000";
+
   constructor() {
 
     this.client =
@@ -38,31 +41,76 @@ export class NetworkManager {
   }
 
   // ==========================================
-  // JOIN ROOM
+  // FIND ROOM BY CODE
   // ==========================================
 
-  async joinRoom(
-    roomId?: string
-  ): Promise<Room> {
+  async findRoom(
+    roomCode: string
+  ): Promise<string> {
+
+    const code =
+      roomCode
+        .trim()
+        .toUpperCase();
 
     console.log(
-      "Joining room..."
+      "Looking for room:",
+      code
     );
 
-    if (roomId) {
+    const response =
+      await fetch(
+        `${this.lookupServer}/room/${code}`
+      );
 
-      this.room =
-        await this.client.joinById(
-          roomId
-        );
+    if (!response.ok) {
 
-    } else {
+      const data =
+        await response
+          .json()
+          .catch(
+            () => ({})
+          );
 
-      this.room =
-        await this.client.joinOrCreate(
-          "game"
-        );
+      throw new Error(
+        data.error ||
+        "Room not found"
+      );
     }
+
+    const data =
+      await response.json();
+
+    console.log(
+      "Room found:",
+      data.roomId
+    );
+
+    return data.roomId;
+  }
+
+  // ==========================================
+  // JOIN ROOM BY CODE
+  // ==========================================
+
+  async joinRoomByCode(
+    roomCode: string
+  ): Promise<Room> {
+
+    const roomId =
+      await this.findRoom(
+        roomCode
+      );
+
+    console.log(
+      "Joining Colyseus room:",
+      roomId
+    );
+
+    this.room =
+      await this.client.joinById(
+        roomId
+      );
 
     console.log(
       "Joined room:",

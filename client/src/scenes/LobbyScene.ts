@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { Room } from "@colyseus/sdk";
+
 import { NetworkManager } from "../network/NetworkManager";
 
 interface PlayerData {
@@ -13,12 +14,16 @@ interface PlayerData {
 
 export class LobbyScene extends Phaser.Scene {
 
-  private mode: "create" | "join" =
+  private mode:
+    "create" | "join" =
     "create";
 
   private network!: NetworkManager;
 
   private room!: Room;
+
+  private roomCode =
+    "";
 
   private players:
     Map<string, PlayerData> =
@@ -28,9 +33,17 @@ export class LobbyScene extends Phaser.Scene {
     Map<string, Phaser.GameObjects.Text> =
     new Map();
 
-  private readyButton!: Phaser.GameObjects.Text;
+  private readyButton!:
+    Phaser.GameObjects.Text;
 
-  private statusText!: Phaser.GameObjects.Text;
+  private statusText!:
+    Phaser.GameObjects.Text;
+
+  private roomCodeText!:
+    Phaser.GameObjects.Text;
+
+  private errorText!:
+    Phaser.GameObjects.Text;
 
   constructor() {
     super("LobbyScene");
@@ -40,11 +53,15 @@ export class LobbyScene extends Phaser.Scene {
   // INIT
   // ==========================================
 
-  init(data: {
-    mode: "create" | "join";
-  }) {
+  init(
+    data: {
+      mode:
+        "create" | "join";
+    }
+  ) {
 
-    this.mode = data.mode;
+    this.mode =
+      data.mode;
   }
 
   // ==========================================
@@ -74,7 +91,7 @@ export class LobbyScene extends Phaser.Scene {
 
     this.add.text(
       400,
-      115,
+      110,
       "LOBBY",
       {
         fontSize: "28px",
@@ -89,7 +106,7 @@ export class LobbyScene extends Phaser.Scene {
     this.statusText =
       this.add.text(
         400,
-        165,
+        160,
         "Connecting...",
         {
           fontSize: "20px",
@@ -97,62 +114,102 @@ export class LobbyScene extends Phaser.Scene {
         }
       ).setOrigin(0.5);
 
-    try {
+    // ----------------------------------------
+    // ROOM CODE
+    // ----------------------------------------
 
-      this.network =
-        new NetworkManager();
-
-      // --------------------------------------
-      // CREATE ROOM
-      // --------------------------------------
-
-      if (
-        this.mode === "create"
-      ) {
-
-        this.room =
-          await this.network.createRoom();
-
-      }
-
-      // --------------------------------------
-      // JOIN ROOM
-      // --------------------------------------
-
-      else {
-
-        this.room =
-          await this.network.joinRoom();
-
-      }
-
-      console.log(
-        "Lobby connected:",
-        this.room.roomId
-      );
-
-      this.statusText.setText(
-        "Room created"
-      );
-
-      // --------------------------------------
-      // ROOM ID
-      // --------------------------------------
-
+    this.roomCodeText =
       this.add.text(
         400,
         210,
-        `ROOM ID: ${this.room.roomId}`,
+        "",
         {
-          fontSize: "24px",
+          fontSize: "26px",
           color: "#ffffff",
           fontStyle: "bold"
         }
       ).setOrigin(0.5);
 
-      this.setupRoomListeners();
+    // ----------------------------------------
+    // ERROR
+    // ----------------------------------------
 
-      this.createLobbyButtons();
+    this.errorText =
+      this.add.text(
+        400,
+        245,
+        "",
+        {
+          fontSize: "18px",
+          color: "#ff6666"
+        }
+      ).setOrigin(0.5);
+
+    // ----------------------------------------
+    // CREATE OR JOIN
+    // ----------------------------------------
+
+    try {
+
+      this.network =
+        new NetworkManager();
+
+      if (
+        this.mode === "create"
+      ) {
+
+        // -------------------------------
+        // CREATE ROOM
+        // -------------------------------
+
+        this.room =
+          await this.network.createRoom();
+
+        this.statusText.setText(
+          "Room created!"
+        );
+
+        this.setupRoomListeners();
+
+        this.createLobbyButtons();
+
+      } else {
+
+        // -------------------------------
+        // JOIN ROOM
+        // -------------------------------
+
+        const code =
+          window.prompt(
+            "Enter the 6-character room code:"
+          );
+
+        if (!code) {
+
+          this.scene.start(
+            "MenuScene"
+          );
+
+          return;
+        }
+
+        this.statusText.setText(
+          "Finding room..."
+        );
+
+        this.room =
+          await this.network.joinRoomByCode(
+            code
+          );
+
+        this.statusText.setText(
+          "Joined room!"
+        );
+
+        this.setupRoomListeners();
+
+        this.createLobbyButtons();
+      }
 
     } catch (error) {
 
@@ -162,8 +219,16 @@ export class LobbyScene extends Phaser.Scene {
       );
 
       this.statusText.setText(
-        "Could not connect to server"
+        "Connection failed"
       );
+
+      this.errorText.setText(
+        error instanceof Error
+          ? error.message
+          : "Could not connect to room"
+      );
+
+      this.createBackButton();
     }
   }
 
@@ -172,6 +237,26 @@ export class LobbyScene extends Phaser.Scene {
   // ==========================================
 
   private setupRoomListeners() {
+
+    // ----------------------------------------
+    // ROOM INFO
+    // ----------------------------------------
+
+    this.room.onMessage(
+      "roomInfo",
+      (data: {
+        roomId: string;
+        roomCode: string;
+      }) => {
+
+        this.roomCode =
+          data.roomCode;
+
+        this.roomCodeText.setText(
+          `ROOM CODE: ${data.roomCode}`
+        );
+      }
+    );
 
     // ----------------------------------------
     // MY PLAYER
@@ -274,12 +359,15 @@ export class LobbyScene extends Phaser.Scene {
   }
 
   // ==========================================
-  // PLAYER LIST
+  // UPDATE PLAYER LIST
   // ==========================================
 
   private updatePlayerList() {
 
-    // Remove previous player text
+    // ----------------------------------------
+    // REMOVE OLD TEXT
+    // ----------------------------------------
+
     for (
       const text
       of this.playerTexts.values()
@@ -290,6 +378,10 @@ export class LobbyScene extends Phaser.Scene {
 
     this.playerTexts.clear();
 
+    // ----------------------------------------
+    // SORT PLAYERS
+    // ----------------------------------------
+
     const sortedPlayers =
       Array.from(
         this.players.values()
@@ -298,6 +390,10 @@ export class LobbyScene extends Phaser.Scene {
           a.playerIndex -
           b.playerIndex
       );
+
+    // ----------------------------------------
+    // DISPLAY PLAYERS
+    // ----------------------------------------
 
     for (
       const player
@@ -317,14 +413,14 @@ export class LobbyScene extends Phaser.Scene {
       const text =
         this.add.text(
           400,
-          270 +
+          285 +
             player.playerIndex *
-            55,
+            50,
           `Player ${
             player.playerIndex + 1
-          }    ${status}`,
+          }     ${status}`,
           {
-            fontSize: "24px",
+            fontSize: "22px",
             color: color
           }
         ).setOrigin(0.5);
@@ -337,7 +433,7 @@ export class LobbyScene extends Phaser.Scene {
   }
 
   // ==========================================
-  // BUTTONS
+  // CREATE BUTTONS
   // ==========================================
 
   private createLobbyButtons() {
@@ -369,6 +465,28 @@ export class LobbyScene extends Phaser.Scene {
       });
 
     this.readyButton.on(
+      "pointerover",
+      () => {
+
+        this.readyButton.setStyle({
+          backgroundColor:
+            "#666666"
+        });
+      }
+    );
+
+    this.readyButton.on(
+      "pointerout",
+      () => {
+
+        this.readyButton.setStyle({
+          backgroundColor:
+            "#444444"
+        });
+      }
+    );
+
+    this.readyButton.on(
       "pointerdown",
       () => {
 
@@ -392,7 +510,7 @@ export class LobbyScene extends Phaser.Scene {
         570,
         "LEAVE",
         {
-          fontSize: "20px",
+          fontSize: "18px",
           color: "#ffffff",
           backgroundColor: "#333333",
           padding: {
@@ -413,6 +531,45 @@ export class LobbyScene extends Phaser.Scene {
       async () => {
 
         await this.network.leaveRoom();
+
+        this.scene.start(
+          "MenuScene"
+        );
+      }
+    );
+  }
+
+  // ==========================================
+  // BACK BUTTON
+  // ==========================================
+
+  private createBackButton() {
+
+    const backButton =
+      this.add.text(
+        400,
+        500,
+        "BACK",
+        {
+          fontSize: "24px",
+          color: "#ffffff",
+          backgroundColor: "#444444",
+          padding: {
+            left: 30,
+            right: 30,
+            top: 12,
+            bottom: 12
+          }
+        }
+      )
+      .setOrigin(0.5)
+      .setInteractive({
+        useHandCursor: true
+      });
+
+    backButton.on(
+      "pointerdown",
+      () => {
 
         this.scene.start(
           "MenuScene"

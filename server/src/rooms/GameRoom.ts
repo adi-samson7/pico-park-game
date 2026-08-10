@@ -16,6 +16,16 @@ export class GameRoom extends Room {
   players: Map<string, Player> = new Map();
 
   // ----------------------------------------
+  // ROOM CODE
+  // ----------------------------------------
+
+  roomCode = "";
+
+  static roomsByCode:
+    Map<string, GameRoom> =
+    new Map();
+
+  // ----------------------------------------
   // SPAWN POSITIONS
   // ----------------------------------------
 
@@ -37,15 +47,32 @@ export class GameRoom extends Room {
     0xffcc33  // Yellow
   ];
 
-  // ----------------------------------------
+  // ========================================
   // ROOM CREATED
-  // ----------------------------------------
+  // ========================================
 
   onCreate() {
 
     console.log(
       "Game room created:",
       this.roomId
+    );
+
+    // --------------------------------------
+    // GENERATE ROOM CODE
+    // --------------------------------------
+
+    this.roomCode =
+      this.generateRoomCode();
+
+    GameRoom.roomsByCode.set(
+      this.roomCode,
+      this
+    );
+
+    console.log(
+      "Room code:",
+      this.roomCode
     );
 
     // --------------------------------------
@@ -79,7 +106,7 @@ export class GameRoom extends Room {
     );
 
     // --------------------------------------
-    // PLAYER READY
+    // READY
     // --------------------------------------
 
     this.onMessage(
@@ -95,8 +122,8 @@ export class GameRoom extends Room {
           return;
         }
 
-        // Toggle ready status
-        player.ready = !player.ready;
+        player.ready =
+          !player.ready;
 
         console.log(
           `Player ${
@@ -106,8 +133,6 @@ export class GameRoom extends Room {
           }`
         );
 
-        // Tell every player about
-        // the readiness change
         this.broadcast(
           "playerReadyChanged",
           {
@@ -119,9 +144,47 @@ export class GameRoom extends Room {
     );
   }
 
-  // ----------------------------------------
+  // ========================================
+  // GENERATE ROOM CODE
+  // ========================================
+
+  private generateRoomCode(): string {
+
+    const characters =
+      "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+    let code = "";
+
+    do {
+
+      code = "";
+
+      for (
+        let i = 0;
+        i < 6;
+        i++
+      ) {
+
+        const index =
+          Math.floor(
+            Math.random() *
+            characters.length
+          );
+
+        code +=
+          characters[index];
+      }
+
+    } while (
+      GameRoom.roomsByCode.has(code)
+    );
+
+    return code;
+  }
+
+  // ========================================
   // PLAYER JOINED
-  // ----------------------------------------
+  // ========================================
 
   onJoin(client: Client) {
 
@@ -156,7 +219,7 @@ export class GameRoom extends Room {
     }
 
     // --------------------------------------
-    // GET SPAWN POSITION
+    // SPAWN POSITION
     // --------------------------------------
 
     const spawn =
@@ -165,7 +228,7 @@ export class GameRoom extends Room {
       ];
 
     // --------------------------------------
-    // GET PLAYER COLOR
+    // PLAYER COLOR
     // --------------------------------------
 
     const color =
@@ -227,8 +290,22 @@ export class GameRoom extends Room {
     );
 
     // --------------------------------------
+    // SEND ROOM INFORMATION
+    // --------------------------------------
+
+    client.send(
+      "roomInfo",
+      {
+        roomId:
+          this.roomId,
+
+        roomCode:
+          this.roomCode
+      }
+    );
+
+    // --------------------------------------
     // SEND EXISTING PLAYERS
-    // TO NEW PLAYER
     // --------------------------------------
 
     for (
@@ -250,7 +327,6 @@ export class GameRoom extends Room {
 
     // --------------------------------------
     // TELL OTHER PLAYERS
-    // ABOUT NEW PLAYER
     // --------------------------------------
 
     this.broadcast(
@@ -262,9 +338,9 @@ export class GameRoom extends Room {
     );
   }
 
-  // ----------------------------------------
+  // ========================================
   // PLAYER LEFT
-  // ----------------------------------------
+  // ========================================
 
   onLeave(client: Client) {
 
@@ -278,7 +354,6 @@ export class GameRoom extends Room {
         client.sessionId
       );
 
-    // Remove player
     this.players.delete(
       client.sessionId
     );
@@ -292,13 +367,28 @@ export class GameRoom extends Room {
       );
     }
 
-    // Tell remaining players
     this.broadcast(
       "playerLeft",
       {
         id:
           client.sessionId
       }
+    );
+  }
+
+  // ========================================
+  // ROOM DISPOSED
+  // ========================================
+
+  onDispose() {
+
+    console.log(
+      "Disposing room:",
+      this.roomId
+    );
+
+    GameRoom.roomsByCode.delete(
+      this.roomCode
     );
   }
 }
