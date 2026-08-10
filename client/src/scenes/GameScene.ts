@@ -5,6 +5,10 @@ interface PlayerData {
   id: string;
   x: number;
   y: number;
+
+  velocityX?: number;
+  velocityY?: number;
+
   playerIndex: number;
   color: number;
   ready: boolean;
@@ -15,27 +19,149 @@ interface RemotePlayer {
   sprite: Phaser.Physics.Arcade.Sprite;
 }
 
+interface GameSceneData {
+  room: Room;
+  players: PlayerData[];
+  myPlayer?: PlayerData;
+}
+
 export class GameScene extends Phaser.Scene {
 
-  private player!: Phaser.Physics.Arcade.Sprite;
+  // ==========================================
+  // PLAYER
+  // ==========================================
 
-  private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
+  private player!:
+    Phaser.Physics.Arcade.Sprite;
+
+  private cursors!:
+    Phaser.Types.Input.Keyboard.CursorKeys;
+
+  // ==========================================
+  // NETWORK
+  // ==========================================
 
   private room!: Room;
+
+  // All players received from LobbyScene
+
+  private players: PlayerData[] = [];
+
+  // Our own player data
+
+  private myPlayerData!:
+    PlayerData;
+
+  // Other players
 
   private remotePlayers:
     Map<string, RemotePlayer> =
     new Map();
+
+  // ==========================================
+  // INPUT
+  // ==========================================
+
+  private jumpWasDown = false;
 
   constructor() {
     super("GameScene");
   }
 
   // ==========================================
+  // INIT
+  // ==========================================
+
+  init(data: GameSceneData) {
+
+    console.log(
+      "================================"
+    );
+
+    console.log(
+      "GameScene received data"
+    );
+
+    console.log(
+      "================================"
+    );
+
+    // ----------------------------------------
+    // ROOM
+    // ----------------------------------------
+
+    this.room =
+      data.room;
+
+    console.log(
+      "Room ID:",
+      this.room.roomId
+    );
+
+    console.log(
+      "My session ID:",
+      this.room.sessionId
+    );
+
+    // ----------------------------------------
+    // PLAYER LIST
+    // ----------------------------------------
+
+    this.players =
+      data.players || [];
+
+    console.log(
+      "Players received:",
+      this.players
+    );
+
+    // ----------------------------------------
+    // OUR PLAYER
+    // ----------------------------------------
+
+    if (data.myPlayer) {
+
+      this.myPlayerData =
+        data.myPlayer;
+
+    }
+
+    // ----------------------------------------
+    // FALLBACK:
+    // FIND OUR PLAYER IN PLAYER LIST
+    // ----------------------------------------
+
+    if (!this.myPlayerData) {
+
+      const me =
+        this.players.find(
+          (player) =>
+            player.id ===
+            this.room.sessionId
+        );
+
+      if (me) {
+
+        this.myPlayerData =
+          me;
+      }
+    }
+
+    console.log(
+      "My player data:",
+      this.myPlayerData
+    );
+  }
+
+  // ==========================================
   // CREATE
   // ==========================================
 
-  async create() {
+  create() {
+
+    console.log(
+      "Starting GameScene..."
+    );
 
     this.createPlayerTexture();
 
@@ -44,7 +170,42 @@ export class GameScene extends Phaser.Scene {
     this.cursors =
       this.input.keyboard!.createCursorKeys();
 
-    await this.connectToServer();
+    // ----------------------------------------
+    // APPLY OUR SERVER PLAYER DATA
+    // ----------------------------------------
+
+    if (this.myPlayerData) {
+
+      this.player.setPosition(
+        this.myPlayerData.x,
+        this.myPlayerData.y
+      );
+
+      this.player.setTint(
+        this.myPlayerData.color
+      );
+
+      console.log(
+        "Local player created:",
+        this.myPlayerData
+      );
+    }
+
+    // ----------------------------------------
+    // CREATE OTHER PLAYERS
+    // ----------------------------------------
+
+    this.createExistingPlayers();
+
+    // ----------------------------------------
+    // NETWORK LISTENERS
+    // ----------------------------------------
+
+    this.setupRoomListeners();
+
+    console.log(
+      "GameScene ready."
+    );
   }
 
   // ==========================================
@@ -52,6 +213,16 @@ export class GameScene extends Phaser.Scene {
   // ==========================================
 
   private createPlayerTexture() {
+
+    // Don't recreate the texture if it
+    // already exists.
+
+    if (
+      this.textures.exists("player")
+    ) {
+
+      return;
+    }
 
     const graphics =
       this.add.graphics();
@@ -83,13 +254,9 @@ export class GameScene extends Phaser.Scene {
 
   private createWorld() {
 
-    // ----------------------------------------
+    // ========================================
     // LOCAL PLAYER
-    // ----------------------------------------
-
-    // Temporary position.
-    // The server will assign the real
-    // position after joining the room.
+    // ========================================
 
     this.player =
       this.physics.add.sprite(
@@ -98,20 +265,22 @@ export class GameScene extends Phaser.Scene {
         "player"
       );
 
-    // Temporary default color.
-    // Server will replace this.
+    // White temporarily.
+    //
+    // Server color will be applied after
+    // myPlayerData is received.
 
     this.player.setTint(
-      0xff4444
+      0xffffff
     );
 
     this.player.setCollideWorldBounds(
       true
     );
 
-    // ----------------------------------------
+    // ========================================
     // GROUND
-    // ----------------------------------------
+    // ========================================
 
     const ground =
       this.add.rectangle(
@@ -134,102 +303,73 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ==========================================
-  // CONNECT TO COLYSEUS SERVER
+  // CREATE EXISTING PLAYERS
   // ==========================================
 
-  private async connectToServer() {
+  private createExistingPlayers() {
 
-    try {
+    console.log(
+      "Creating existing players..."
+    );
 
-      const client =
-        new (await import(
-          "@colyseus/sdk"
-        )).Client(
-          "ws://localhost:2567"
-        );
+    for (
+      const player
+      of this.players
+    ) {
 
-      console.log(
-        "Connecting to game server..."
-      );
+      // --------------------------------------
+      // DON'T CREATE OURSELVES
+      // --------------------------------------
 
-      this.room =
-        await client.joinOrCreate(
-          "game"
-        );
-
-      console.log(
-        "Connected to room:",
-        this.room.roomId
-      );
-
-      console.log(
-        "My session ID:",
+      if (
+        player.id ===
         this.room.sessionId
-      );
+      ) {
 
-      this.setupRoomListeners();
+        continue;
+      }
 
-    } catch (error) {
+      // --------------------------------------
+      // CREATE REMOTE PLAYER
+      // --------------------------------------
 
-      console.error(
-        "Could not connect to game server:",
-        error
+      this.createRemotePlayer(
+        player
       );
     }
+
+    console.log(
+      "Remote players:",
+      this.remotePlayers.size
+    );
   }
 
   // ==========================================
-  // ROOM MESSAGE LISTENERS
+  // ROOM LISTENERS
   // ==========================================
 
   private setupRoomListeners() {
 
-    // ----------------------------------------
-    // MY PLAYER DATA
-    // ----------------------------------------
-
-    this.room.onMessage(
-      "playerJoinedSelf",
-      (player: PlayerData) => {
-
-        console.log(
-          "My player data:",
-          player
-        );
-
-        // Server-assigned spawn
-        this.player.setPosition(
-          player.x,
-          player.y
-        );
-
-        // Server-assigned color
-        this.player.setTint(
-          player.color
-        );
-      }
-    );
-
-    // ----------------------------------------
+    // ========================================
     // PLAYER JOINED
-    // ----------------------------------------
+    // ========================================
 
     this.room.onMessage(
       "playerJoined",
       (player: PlayerData) => {
 
         console.log(
-          "Player joined:",
+          "New player joined:",
           player
         );
 
-        // Don't create ourselves
-        // as a remote player.
+        // Don't create ourselves.
 
         if (
           player.id ===
           this.room.sessionId
         ) {
+
           return;
         }
 
@@ -239,13 +379,38 @@ export class GameScene extends Phaser.Scene {
       }
     );
 
-    // ----------------------------------------
+    // ========================================
     // PLAYER MOVED
-    // ----------------------------------------
+    // ========================================
 
     this.room.onMessage(
       "playerMoved",
-      (player: PlayerData) => {
+      (player: {
+        id: string;
+        x: number;
+        y: number;
+      }) => {
+
+        // ------------------------------------
+        // LOCAL PLAYER
+        // ------------------------------------
+
+        if (
+          player.id ===
+          this.room.sessionId
+        ) {
+
+          this.player.setPosition(
+            player.x,
+            player.y
+          );
+
+          return;
+        }
+
+        // ------------------------------------
+        // REMOTE PLAYER
+        // ------------------------------------
 
         const remotePlayer =
           this.remotePlayers.get(
@@ -253,6 +418,12 @@ export class GameScene extends Phaser.Scene {
           );
 
         if (!remotePlayer) {
+
+          console.warn(
+            "Received movement for unknown player:",
+            player.id
+          );
+
           return;
         }
 
@@ -263,50 +434,35 @@ export class GameScene extends Phaser.Scene {
       }
     );
 
-    // ----------------------------------------
+    // ========================================
     // PLAYER LEFT
-    // ----------------------------------------
+    // ========================================
 
     this.room.onMessage(
       "playerLeft",
-      (player: { id: string }) => {
+      (data: {
+        id: string;
+      }) => {
 
         console.log(
           "Player left:",
-          player.id
+          data.id
         );
 
         const remotePlayer =
           this.remotePlayers.get(
-            player.id
+            data.id
           );
 
         if (!remotePlayer) {
+
           return;
         }
 
         remotePlayer.sprite.destroy();
 
         this.remotePlayers.delete(
-          player.id
-        );
-      }
-    );
-
-    // ----------------------------------------
-    // READY STATUS CHANGED
-    // ----------------------------------------
-
-    this.room.onMessage(
-      "playerReadyChanged",
-      (data: {
-        id: string;
-        ready: boolean;
-      }) => {
-
-        console.log(
-          "Ready changed:",
-          data
+          data.id
         );
       }
     );
@@ -320,15 +476,43 @@ export class GameScene extends Phaser.Scene {
     player: PlayerData
   ) {
 
-    // Prevent duplicate players.
+    // ========================================
+    // SAFETY CHECK
+    // ========================================
+
+    if (
+      player.id ===
+      this.room.sessionId
+    ) {
+
+      return;
+    }
+
+    // ========================================
+    // PREVENT DUPLICATES
+    // ========================================
 
     if (
       this.remotePlayers.has(
         player.id
       )
     ) {
+
       return;
     }
+
+    console.log(
+      "Creating remote player:",
+      player.id,
+      "index:",
+      player.playerIndex,
+      "color:",
+      player.color
+    );
+
+    // ========================================
+    // CREATE SPRITE
+    // ========================================
 
     const sprite =
       this.physics.add.sprite(
@@ -336,8 +520,6 @@ export class GameScene extends Phaser.Scene {
         player.y,
         "player"
       );
-
-    // Use server-assigned color.
 
     sprite.setTint(
       player.color
@@ -347,16 +529,17 @@ export class GameScene extends Phaser.Scene {
       true
     );
 
-    // ----------------------------------------
-    // REMOTE PLAYER GROUND
-    // ----------------------------------------
+    // ========================================
+    // GROUND
+    // ========================================
 
     const ground =
       this.add.rectangle(
         400,
         550,
         800,
-        50
+        50,
+        0x333333
       );
 
     this.physics.add.existing(
@@ -369,15 +552,18 @@ export class GameScene extends Phaser.Scene {
       ground
     );
 
-    // ----------------------------------------
-    // STORE REMOTE PLAYER
-    // ----------------------------------------
+    // ========================================
+    // STORE
+    // ========================================
 
     this.remotePlayers.set(
       player.id,
       {
-        id: player.id,
-        sprite: sprite
+        id:
+          player.id,
+
+        sprite:
+          sprite
       }
     );
   }
@@ -388,82 +574,84 @@ export class GameScene extends Phaser.Scene {
 
   update() {
 
-    if (!this.player) {
+    if (
+      !this.room ||
+      !this.player ||
+      !this.cursors
+    ) {
+
       return;
     }
 
-    const speed = 200;
+    // ========================================
+    // KEYBOARD INPUT
+    // ========================================
+
+    const left =
+      this.cursors.left.isDown;
+
+    const right =
+      this.cursors.right.isDown;
+
+    const jump =
+      this.cursors.up.isDown;
+
+    // ========================================
+    // JUMP PRESS DETECTION
+    // ========================================
+    //
+    // We only send jump=true once when
+    // the key is pressed.
+    //
+
+    const jumpPressed =
+      jump &&
+      !this.jumpWasDown;
+
+    this.jumpWasDown =
+      jump;
+
+    // ========================================
+    // SEND INPUT TO SERVER
+    // ========================================
+
+    this.room.send(
+      "input",
+      {
+        left:
+          left,
+
+        right:
+          right,
+
+        jump:
+          jumpPressed
+      }
+    );
+  }
+
+  // ==========================================
+  // SHUTDOWN
+  // ==========================================
+
+  shutdown() {
+
+    console.log(
+      "GameScene shutting down."
+    );
 
     // ----------------------------------------
-    // MOVE LEFT
+    // DESTROY REMOTE PLAYERS
     // ----------------------------------------
 
-    if (
-      this.cursors.left.isDown
+    for (
+      const remotePlayer
+      of this.remotePlayers.values()
     ) {
 
-      this.player.setVelocityX(
-        -speed
-      );
-
+      remotePlayer.sprite.destroy();
     }
 
-    // ----------------------------------------
-    // MOVE RIGHT
-    // ----------------------------------------
-
-    else if (
-      this.cursors.right.isDown
-    ) {
-
-      this.player.setVelocityX(
-        speed
-      );
-
-    }
-
-    // ----------------------------------------
-    // STOP
-    // ----------------------------------------
-
-    else {
-
-      this.player.setVelocityX(
-        0
-      );
-    }
-
-    // ----------------------------------------
-    // JUMP
-    // ----------------------------------------
-
-    if (
-      this.cursors.up.isDown &&
-      this.player.body &&
-      (
-        this.player.body as
-        Phaser.Physics.Arcade.Body
-      ).blocked.down
-    ) {
-
-      this.player.setVelocityY(
-        -450
-      );
-    }
-
-    // ----------------------------------------
-    // SEND POSITION TO SERVER
-    // ----------------------------------------
-
-    if (this.room) {
-
-      this.room.send(
-        "move",
-        {
-          x: this.player.x,
-          y: this.player.y
-        }
-      );
-    }
+    this.remotePlayers.clear();
   }
 }
