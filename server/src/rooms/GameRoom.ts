@@ -16,6 +16,12 @@ export class GameRoom extends Room {
   players: Map<string, Player> = new Map();
 
   // ----------------------------------------
+  // ROOM STATE
+  // ----------------------------------------
+
+  private gameStarted = false;
+
+  // ----------------------------------------
   // ROOM CODE
   // ----------------------------------------
 
@@ -75,13 +81,16 @@ export class GameRoom extends Room {
       this.roomCode
     );
 
-    // --------------------------------------
+    // ======================================
     // PLAYER MOVEMENT
-    // --------------------------------------
+    // ======================================
 
     this.onMessage(
       "move",
       (client, message) => {
+
+        // Don't accept movement
+        // before a player exists.
 
         const player =
           this.players.get(
@@ -92,8 +101,19 @@ export class GameRoom extends Room {
           return;
         }
 
-        player.x = message.x;
-        player.y = message.y;
+        // ----------------------------------
+        // UPDATE PLAYER POSITION
+        // ----------------------------------
+
+        player.x =
+          Number(message.x);
+
+        player.y =
+          Number(message.y);
+
+        // ----------------------------------
+        // BROADCAST TO OTHER PLAYERS
+        // ----------------------------------
 
         this.broadcast(
           "playerMoved",
@@ -105,13 +125,20 @@ export class GameRoom extends Room {
       }
     );
 
-    // --------------------------------------
-    // READY
-    // --------------------------------------
+    // ======================================
+    // TOGGLE READY
+    // ======================================
 
     this.onMessage(
       "toggleReady",
       (client) => {
+
+        // Don't allow players to change
+        // ready state after the game starts.
+
+        if (this.gameStarted) {
+          return;
+        }
 
         const player =
           this.players.get(
@@ -121,6 +148,8 @@ export class GameRoom extends Room {
         if (!player) {
           return;
         }
+
+        // Toggle ready state.
 
         player.ready =
           !player.ready;
@@ -133,13 +162,26 @@ export class GameRoom extends Room {
           }`
         );
 
+        // ----------------------------------
+        // INFORM ALL PLAYERS
+        // ----------------------------------
+
         this.broadcast(
           "playerReadyChanged",
           {
-            id: player.id,
-            ready: player.ready
+            id:
+              player.id,
+
+            ready:
+              player.ready
           }
         );
+
+        // ----------------------------------
+        // CHECK IF GAME CAN START
+        // ----------------------------------
+
+        this.checkAllPlayersReady();
       }
     );
   }
@@ -149,6 +191,9 @@ export class GameRoom extends Room {
   // ========================================
 
   private generateRoomCode(): string {
+
+    // Avoid confusing characters:
+    // I, O, 0 and 1.
 
     const characters =
       "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -176,10 +221,99 @@ export class GameRoom extends Room {
       }
 
     } while (
-      GameRoom.roomsByCode.has(code)
+      GameRoom.roomsByCode.has(
+        code
+      )
     );
 
     return code;
+  }
+
+  // ========================================
+  // CHECK ALL PLAYERS READY
+  // ========================================
+
+  private checkAllPlayersReady() {
+
+    const playerList =
+      Array.from(
+        this.players.values()
+      );
+
+    // --------------------------------------
+    // REQUIRE AT LEAST ONE PLAYER
+    // --------------------------------------
+    //
+    // We are keeping this at 1 temporarily
+    // so we can easily test the game.
+    //
+    // Later we can change this to:
+    //
+    // if (playerList.length < 2)
+    //
+    // --------------------------------------
+
+    if (
+      playerList.length === 0
+    ) {
+      return;
+    }
+
+    // --------------------------------------
+    // CHECK EVERY PLAYER
+    // --------------------------------------
+
+    const everyoneReady =
+      playerList.every(
+        player =>
+          player.ready
+      );
+
+    if (!everyoneReady) {
+      return;
+    }
+
+    console.log(
+      "All players are ready!"
+    );
+
+    this.startGame();
+  }
+
+  // ========================================
+  // START GAME
+  // ========================================
+
+  private startGame() {
+
+    // Prevent starting twice.
+
+    if (this.gameStarted) {
+      return;
+    }
+
+    this.gameStarted =
+      true;
+
+    console.log(
+      "Starting game:",
+      this.roomCode
+    );
+
+    // --------------------------------------
+    // TELL ALL CLIENTS
+    // --------------------------------------
+
+    this.broadcast(
+      "gameStarted",
+      {
+        roomId:
+          this.roomId,
+
+        roomCode:
+          this.roomCode
+      }
+    );
   }
 
   // ========================================
@@ -194,7 +328,7 @@ export class GameRoom extends Room {
     );
 
     // --------------------------------------
-    // FIND AVAILABLE PLAYER SLOT
+    // FIND AVAILABLE PLAYER INDEX
     // --------------------------------------
 
     const usedIndexes =
@@ -214,12 +348,23 @@ export class GameRoom extends Room {
         playerIndex
       )
     ) {
-
       playerIndex++;
     }
 
+    // Safety check.
+
+    if (
+      playerIndex >=
+      this.spawnPositions.length
+    ) {
+
+      throw new Error(
+        "No available player slot."
+      );
+    }
+
     // --------------------------------------
-    // SPAWN POSITION
+    // GET SPAWN
     // --------------------------------------
 
     const spawn =
@@ -228,7 +373,7 @@ export class GameRoom extends Room {
       ];
 
     // --------------------------------------
-    // PLAYER COLOR
+    // GET COLOR
     // --------------------------------------
 
     const color =
@@ -306,6 +451,7 @@ export class GameRoom extends Room {
 
     // --------------------------------------
     // SEND EXISTING PLAYERS
+    // TO NEW PLAYER
     // --------------------------------------
 
     for (
@@ -326,7 +472,8 @@ export class GameRoom extends Room {
     }
 
     // --------------------------------------
-    // TELL OTHER PLAYERS
+    // INFORM OTHER PLAYERS
+    // ABOUT NEW PLAYER
     // --------------------------------------
 
     this.broadcast(
@@ -354,6 +501,8 @@ export class GameRoom extends Room {
         client.sessionId
       );
 
+    // Remove player.
+
     this.players.delete(
       client.sessionId
     );
@@ -367,6 +516,10 @@ export class GameRoom extends Room {
       );
     }
 
+    // --------------------------------------
+    // INFORM OTHER PLAYERS
+    // --------------------------------------
+
     this.broadcast(
       "playerLeft",
       {
@@ -374,6 +527,17 @@ export class GameRoom extends Room {
           client.sessionId
       }
     );
+
+    // --------------------------------------
+    // CHECK READY STATE AGAIN
+    // --------------------------------------
+
+    if (
+      !this.gameStarted
+    ) {
+
+      this.checkAllPlayersReady();
+    }
   }
 
   // ========================================
@@ -386,6 +550,8 @@ export class GameRoom extends Room {
       "Disposing room:",
       this.roomId
     );
+
+    // Remove room code mapping.
 
     GameRoom.roomsByCode.delete(
       this.roomCode

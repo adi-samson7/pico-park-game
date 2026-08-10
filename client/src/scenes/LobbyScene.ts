@@ -22,8 +22,7 @@ export class LobbyScene extends Phaser.Scene {
 
   private room!: Room;
 
-  private roomCode =
-    "";
+  private roomCode = "";
 
   private players:
     Map<string, PlayerData> =
@@ -146,7 +145,7 @@ export class LobbyScene extends Phaser.Scene {
       ).setOrigin(0.5);
 
     // ----------------------------------------
-    // CREATE OR JOIN
+    // NETWORK
     // ----------------------------------------
 
     try {
@@ -154,13 +153,17 @@ export class LobbyScene extends Phaser.Scene {
       this.network =
         new NetworkManager();
 
+      // ======================================
+      // CREATE ROOM
+      // ======================================
+
       if (
         this.mode === "create"
       ) {
 
-        // -------------------------------
-        // CREATE ROOM
-        // -------------------------------
+        this.statusText.setText(
+          "Creating room..."
+        );
 
         this.room =
           await this.network.createRoom();
@@ -173,16 +176,20 @@ export class LobbyScene extends Phaser.Scene {
 
         this.createLobbyButtons();
 
-      } else {
+      }
 
-        // -------------------------------
-        // JOIN ROOM
-        // -------------------------------
+      // ======================================
+      // JOIN ROOM
+      // ======================================
+
+      else {
 
         const code =
           window.prompt(
             "Enter the 6-character room code:"
           );
+
+        // User cancelled.
 
         if (!code) {
 
@@ -249,6 +256,11 @@ export class LobbyScene extends Phaser.Scene {
         roomCode: string;
       }) => {
 
+        console.log(
+          "Room info:",
+          data
+        );
+
         this.roomCode =
           data.roomCode;
 
@@ -313,6 +325,11 @@ export class LobbyScene extends Phaser.Scene {
         ready: boolean;
       }) => {
 
+        console.log(
+          "Ready changed:",
+          data
+        );
+
         const player =
           this.players.get(
             data.id
@@ -356,6 +373,35 @@ export class LobbyScene extends Phaser.Scene {
         this.updatePlayerList();
       }
     );
+
+    // ----------------------------------------
+    // GAME STARTED
+    // ----------------------------------------
+
+    this.room.onMessage(
+      "gameStarted",
+      (data: {
+        roomId: string;
+        roomCode: string;
+      }) => {
+
+        console.log(
+          "Game started!",
+          data
+        );
+
+        // Remove lobby UI.
+
+        this.clearLobbyUI();
+
+        // Move all players
+        // into GameScene.
+
+        this.scene.start(
+          "GameScene"
+        );
+      }
+    );
   }
 
   // ==========================================
@@ -365,7 +411,7 @@ export class LobbyScene extends Phaser.Scene {
   private updatePlayerList() {
 
     // ----------------------------------------
-    // REMOVE OLD TEXT
+    // REMOVE OLD PLAYER TEXT
     // ----------------------------------------
 
     for (
@@ -405,10 +451,18 @@ export class LobbyScene extends Phaser.Scene {
           ? "READY"
           : "NOT READY";
 
-      const color =
+      const textColor =
         player.ready
           ? "#66ff66"
           : "#aaaaaa";
+
+      const playerColor =
+        Phaser.Display.Color.IntegerToColor(
+          player.color
+        );
+
+      const colorHex =
+        playerColor.color;
 
       const text =
         this.add.text(
@@ -421,19 +475,98 @@ export class LobbyScene extends Phaser.Scene {
           }     ${status}`,
           {
             fontSize: "22px",
-            color: color
+            color: textColor,
+            fontStyle:
+              player.id ===
+              this.room?.sessionId
+                ? "bold"
+                : "normal"
           }
         ).setOrigin(0.5);
+
+      // Small color indicator.
+
+      const indicator =
+        this.add.circle(
+          270,
+          297 +
+            player.playerIndex *
+            50,
+          8,
+          colorHex
+        );
+
+      // Store only text because
+      // playerTexts is used for cleanup.
 
       this.playerTexts.set(
         player.id,
         text
       );
+
+      // Prevent unused indicator
+      // from causing cleanup issues
+      // by attaching it to the text.
+
+      text.setData(
+        "indicator",
+        indicator
+      );
+    }
+
+    // Update our button.
+
+    this.updateReadyButton();
+  }
+
+  // ==========================================
+  // UPDATE READY BUTTON
+  // ==========================================
+
+  private updateReadyButton() {
+
+    if (
+      !this.readyButton ||
+      !this.room
+    ) {
+      return;
+    }
+
+    const myPlayer =
+      this.players.get(
+        this.room.sessionId
+      );
+
+    if (!myPlayer) {
+      return;
+    }
+
+    if (myPlayer.ready) {
+
+      this.readyButton.setText(
+        "UNREADY"
+      );
+
+      this.readyButton.setStyle({
+        backgroundColor:
+          "#226622"
+      });
+
+    } else {
+
+      this.readyButton.setText(
+        "READY"
+      );
+
+      this.readyButton.setStyle({
+        backgroundColor:
+          "#444444"
+      });
     }
   }
 
   // ==========================================
-  // CREATE BUTTONS
+  // CREATE LOBBY BUTTONS
   // ==========================================
 
   private createLobbyButtons() {
@@ -468,6 +601,17 @@ export class LobbyScene extends Phaser.Scene {
       "pointerover",
       () => {
 
+        const myPlayer =
+          this.players.get(
+            this.room.sessionId
+          );
+
+        if (
+          myPlayer?.ready
+        ) {
+          return;
+        }
+
         this.readyButton.setStyle({
           backgroundColor:
             "#666666"
@@ -479,10 +623,7 @@ export class LobbyScene extends Phaser.Scene {
       "pointerout",
       () => {
 
-        this.readyButton.setStyle({
-          backgroundColor:
-            "#444444"
-        });
+        this.updateReadyButton();
       }
     );
 
@@ -527,10 +668,42 @@ export class LobbyScene extends Phaser.Scene {
       });
 
     leaveButton.on(
+      "pointerover",
+      () => {
+
+        leaveButton.setStyle({
+          backgroundColor:
+            "#555555"
+        });
+      }
+    );
+
+    leaveButton.on(
+      "pointerout",
+      () => {
+
+        leaveButton.setStyle({
+          backgroundColor:
+            "#333333"
+        });
+      }
+    );
+
+    leaveButton.on(
       "pointerdown",
       async () => {
 
-        await this.network.leaveRoom();
+        try {
+
+          await this.network.leaveRoom();
+
+        } catch (error) {
+
+          console.error(
+            "Error leaving room:",
+            error
+          );
+        }
 
         this.scene.start(
           "MenuScene"
@@ -576,5 +749,49 @@ export class LobbyScene extends Phaser.Scene {
         );
       }
     );
+  }
+
+  // ==========================================
+  // CLEAR LOBBY UI
+  // ==========================================
+
+  private clearLobbyUI() {
+
+    for (
+      const text
+      of this.playerTexts.values()
+    ) {
+
+      const indicator =
+        text.getData(
+          "indicator"
+        ) as
+          | Phaser.GameObjects.Arc
+          | undefined;
+
+      if (indicator) {
+        indicator.destroy();
+      }
+
+      text.destroy();
+    }
+
+    this.playerTexts.clear();
+
+    if (this.readyButton) {
+      this.readyButton.destroy();
+    }
+
+    if (this.statusText) {
+      this.statusText.destroy();
+    }
+
+    if (this.roomCodeText) {
+      this.roomCodeText.destroy();
+    }
+
+    if (this.errorText) {
+      this.errorText.destroy();
+    }
   }
 }
