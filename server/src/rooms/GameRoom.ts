@@ -6,15 +6,14 @@ interface Player {
   y: number;
   playerIndex: number;
   color: number;
+  ready: boolean;
 }
 
 export class GameRoom extends Room {
 
   maxClients = 4;
 
-  players:
-    Map<string, Player> =
-    new Map();
+  players: Map<string, Player> = new Map();
 
   // ----------------------------------------
   // SPAWN POSITIONS
@@ -49,6 +48,10 @@ export class GameRoom extends Room {
       this.roomId
     );
 
+    // --------------------------------------
+    // PLAYER MOVEMENT
+    // --------------------------------------
+
     this.onMessage(
       "move",
       (client, message) => {
@@ -74,6 +77,46 @@ export class GameRoom extends Room {
         );
       }
     );
+
+    // --------------------------------------
+    // PLAYER READY
+    // --------------------------------------
+
+    this.onMessage(
+      "toggleReady",
+      (client) => {
+
+        const player =
+          this.players.get(
+            client.sessionId
+          );
+
+        if (!player) {
+          return;
+        }
+
+        // Toggle ready status
+        player.ready = !player.ready;
+
+        console.log(
+          `Player ${
+            player.playerIndex + 1
+          } ready: ${
+            player.ready
+          }`
+        );
+
+        // Tell every player about
+        // the readiness change
+        this.broadcast(
+          "playerReadyChanged",
+          {
+            id: player.id,
+            ready: player.ready
+          }
+        );
+      }
+    );
   }
 
   // ----------------------------------------
@@ -87,7 +130,10 @@ export class GameRoom extends Room {
       client.sessionId
     );
 
-    // Find available player slot
+    // --------------------------------------
+    // FIND AVAILABLE PLAYER SLOT
+    // --------------------------------------
+
     const usedIndexes =
       new Set(
         Array.from(
@@ -109,17 +155,27 @@ export class GameRoom extends Room {
       playerIndex++;
     }
 
-    // Get spawn position
+    // --------------------------------------
+    // GET SPAWN POSITION
+    // --------------------------------------
+
     const spawn =
       this.spawnPositions[
         playerIndex
       ];
 
-    // Get player color
+    // --------------------------------------
+    // GET PLAYER COLOR
+    // --------------------------------------
+
     const color =
       this.playerColors[
         playerIndex
       ];
+
+    // --------------------------------------
+    // CREATE PLAYER
+    // --------------------------------------
 
     const player: Player = {
 
@@ -136,16 +192,18 @@ export class GameRoom extends Room {
         playerIndex,
 
       color:
-        color
+        color,
+
+      ready:
+        false
     };
 
-    // Store player
+    // --------------------------------------
+    // STORE PLAYER
+    // --------------------------------------
+
     this.players.set(
       client.sessionId,
-      player
-    );
-    client.send(
-      "playerJoinedSelf",
       player
     );
 
@@ -157,6 +215,15 @@ export class GameRoom extends Room {
       }, ${
         spawn.y
       })`
+    );
+
+    // --------------------------------------
+    // SEND OWN PLAYER DATA
+    // --------------------------------------
+
+    client.send(
+      "playerJoinedSelf",
+      player
     );
 
     // --------------------------------------
@@ -211,6 +278,7 @@ export class GameRoom extends Room {
         client.sessionId
       );
 
+    // Remove player
     this.players.delete(
       client.sessionId
     );
@@ -224,6 +292,7 @@ export class GameRoom extends Room {
       );
     }
 
+    // Tell remaining players
     this.broadcast(
       "playerLeft",
       {

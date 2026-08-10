@@ -8,6 +8,7 @@ interface PlayerData {
   y: number;
   playerIndex: number;
   color: number;
+  ready: boolean;
 }
 
 interface RemotePlayer {
@@ -17,6 +18,7 @@ interface RemotePlayer {
 
 class GameScene extends Phaser.Scene {
   private player!: Phaser.Physics.Arcade.Sprite;
+
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
 
   private room!: Room;
@@ -28,6 +30,10 @@ class GameScene extends Phaser.Scene {
     super("GameScene");
   }
 
+  // ==========================================
+  // CREATE
+  // ==========================================
+
   async create() {
     this.createPlayerTexture();
 
@@ -38,6 +44,10 @@ class GameScene extends Phaser.Scene {
 
     await this.connectToServer();
   }
+
+  // ==========================================
+  // CREATE PLAYER TEXTURE
+  // ==========================================
 
   private createPlayerTexture() {
     const graphics = this.add.graphics();
@@ -60,10 +70,15 @@ class GameScene extends Phaser.Scene {
     graphics.destroy();
   }
 
+  // ==========================================
+  // CREATE WORLD
+  // ==========================================
+
   private createWorld() {
+
     // Temporary local player.
-    // We will make the server control this
-    // spawn position in the next step.
+    // The server will provide the actual
+    // spawn position immediately after joining.
     this.player =
       this.physics.add.sprite(
         250,
@@ -71,11 +86,19 @@ class GameScene extends Phaser.Scene {
         "player"
       );
 
-    this.player.setTint(0xff4444);
+    // Temporary default color.
+    // Server will replace this.
+    this.player.setTint(
+      0xff4444
+    );
 
     this.player.setCollideWorldBounds(
       true
     );
+
+    // ----------------------------------------
+    // GROUND
+    // ----------------------------------------
 
     const ground =
       this.add.rectangle(
@@ -97,8 +120,14 @@ class GameScene extends Phaser.Scene {
     );
   }
 
+  // ==========================================
+  // CONNECT TO SERVER
+  // ==========================================
+
   private async connectToServer() {
+
     try {
+
       const client =
         new Client(
           "ws://localhost:2567"
@@ -126,6 +155,7 @@ class GameScene extends Phaser.Scene {
       this.setupRoomListeners();
 
     } catch (error) {
+
       console.error(
         "Could not connect to game server:",
         error
@@ -133,33 +163,41 @@ class GameScene extends Phaser.Scene {
     }
   }
 
+  // ==========================================
+  // ROOM LISTENERS
+  // ==========================================
+
   private setupRoomListeners() {
+
+    // ----------------------------------------
+    // MY PLAYER DATA
+    // ----------------------------------------
+
+    this.room.onMessage(
+      "playerJoinedSelf",
+      (player: PlayerData) => {
+
+        console.log(
+          "My player data:",
+          player
+        );
+
+        // Set server-assigned position
+        this.player.setPosition(
+          player.x,
+          player.y
+        );
+
+        // Set server-assigned color
+        this.player.setTint(
+          player.color
+        );
+      }
+    );
 
     // ----------------------------------------
     // PLAYER JOINED
     // ----------------------------------------
-
-    this.room.onMessage(
-    "playerJoinedSelf",
-    (player: PlayerData) => {
-
-    console.log(
-      "My player data:",
-      player
-    );
-
-    // Set our actual spawn position
-    this.player.setPosition(
-      player.x,
-      player.y
-    );
-
-    // Set our assigned color
-    this.player.setTint(
-      player.color
-    );
-  }
-);
 
     this.room.onMessage(
       "playerJoined",
@@ -170,6 +208,7 @@ class GameScene extends Phaser.Scene {
           player
         );
 
+        // Ignore ourselves
         if (
           player.id ===
           this.room.sessionId
@@ -236,12 +275,35 @@ class GameScene extends Phaser.Scene {
         );
       }
     );
+
+    // ----------------------------------------
+    // READY STATUS CHANGED
+    // ----------------------------------------
+
+    this.room.onMessage(
+      "playerReadyChanged",
+      (data: {
+        id: string;
+        ready: boolean;
+      }) => {
+
+        console.log(
+          "Ready changed:",
+          data
+        );
+      }
+    );
   }
+
+  // ==========================================
+  // CREATE REMOTE PLAYER
+  // ==========================================
 
   private createRemotePlayer(
     player: PlayerData
   ) {
 
+    // Prevent duplicates
     if (
       this.remotePlayers.has(
         player.id
@@ -257,7 +319,7 @@ class GameScene extends Phaser.Scene {
         "player"
       );
 
-    // Use the color assigned by server
+    // Use server-assigned color
     sprite.setTint(
       player.color
     );
@@ -265,6 +327,10 @@ class GameScene extends Phaser.Scene {
     sprite.setCollideWorldBounds(
       true
     );
+
+    // ----------------------------------------
+    // GROUND FOR REMOTE PLAYER
+    // ----------------------------------------
 
     const ground =
       this.add.rectangle(
@@ -284,6 +350,7 @@ class GameScene extends Phaser.Scene {
       ground
     );
 
+    // Store remote player
     this.remotePlayers.set(
       player.id,
       {
@@ -293,6 +360,10 @@ class GameScene extends Phaser.Scene {
     );
   }
 
+  // ==========================================
+  // UPDATE
+  // ==========================================
+
   update() {
 
     if (!this.player) {
@@ -301,7 +372,10 @@ class GameScene extends Phaser.Scene {
 
     const speed = 200;
 
-    // LEFT
+    // ----------------------------------------
+    // MOVE LEFT
+    // ----------------------------------------
+
     if (
       this.cursors.left.isDown
     ) {
@@ -312,7 +386,10 @@ class GameScene extends Phaser.Scene {
 
     }
 
-    // RIGHT
+    // ----------------------------------------
+    // MOVE RIGHT
+    // ----------------------------------------
+
     else if (
       this.cursors.right.isDown
     ) {
@@ -323,7 +400,10 @@ class GameScene extends Phaser.Scene {
 
     }
 
+    // ----------------------------------------
     // STOP
+    // ----------------------------------------
+
     else {
 
       this.player.setVelocityX(
@@ -331,7 +411,10 @@ class GameScene extends Phaser.Scene {
       );
     }
 
+    // ----------------------------------------
     // JUMP
+    // ----------------------------------------
+
     if (
       this.cursors.up.isDown &&
       this.player.body &&
@@ -346,8 +429,10 @@ class GameScene extends Phaser.Scene {
       );
     }
 
-    // Send player position
-    // to the server.
+    // ----------------------------------------
+    // SEND POSITION TO SERVER
+    // ----------------------------------------
+
     if (this.room) {
 
       this.room.send(
@@ -398,4 +483,6 @@ const config:
 // START GAME
 // ==========================================
 
-new Phaser.Game(config);
+new Phaser.Game(
+  config
+);
