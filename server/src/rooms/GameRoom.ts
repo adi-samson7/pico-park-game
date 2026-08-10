@@ -9,11 +9,17 @@ interface Player {
 }
 
 export class GameRoom extends Room {
+
   maxClients = 4;
 
-  players: Map<string, Player> = new Map();
+  players:
+    Map<string, Player> =
+    new Map();
 
-  // Spawn positions for up to 4 players
+  // ----------------------------------------
+  // SPAWN POSITIONS
+  // ----------------------------------------
+
   private spawnPositions = [
     { x: 250, y: 300 },
     { x: 350, y: 300 },
@@ -21,7 +27,10 @@ export class GameRoom extends Room {
     { x: 550, y: 300 }
   ];
 
-  // Player colors
+  // ----------------------------------------
+  // PLAYER COLORS
+  // ----------------------------------------
+
   private playerColors = [
     0xff4444, // Red
     0x4488ff, // Blue
@@ -29,70 +38,150 @@ export class GameRoom extends Room {
     0xffcc33  // Yellow
   ];
 
+  // ----------------------------------------
+  // ROOM CREATED
+  // ----------------------------------------
+
   onCreate() {
-    console.log("Game room created:", this.roomId);
 
-    this.onMessage("move", (client, message) => {
-      const player = this.players.get(client.sessionId);
+    console.log(
+      "Game room created:",
+      this.roomId
+    );
 
-      if (!player) {
-        return;
+    this.onMessage(
+      "move",
+      (client, message) => {
+
+        const player =
+          this.players.get(
+            client.sessionId
+          );
+
+        if (!player) {
+          return;
+        }
+
+        player.x = message.x;
+        player.y = message.y;
+
+        this.broadcast(
+          "playerMoved",
+          player,
+          {
+            except: client
+          }
+        );
       }
-
-      player.x = message.x;
-      player.y = message.y;
-
-      this.broadcast("playerMoved", player, {
-        except: client
-      });
-    });
+    );
   }
 
-  onJoin(client: Client) {
-    console.log("Player joined:", client.sessionId);
+  // ----------------------------------------
+  // PLAYER JOINED
+  // ----------------------------------------
 
-    // Find the first available player slot
-    const usedIndexes = new Set(
-      Array.from(this.players.values()).map(
-        player => player.playerIndex
-      )
+  onJoin(client: Client) {
+
+    console.log(
+      "Player joined:",
+      client.sessionId
     );
+
+    // Find available player slot
+    const usedIndexes =
+      new Set(
+        Array.from(
+          this.players.values()
+        ).map(
+          player =>
+            player.playerIndex
+        )
+      );
 
     let playerIndex = 0;
 
-    while (usedIndexes.has(playerIndex)) {
+    while (
+      usedIndexes.has(
+        playerIndex
+      )
+    ) {
+
       playerIndex++;
     }
 
     // Get spawn position
-    const spawn = this.spawnPositions[playerIndex];
+    const spawn =
+      this.spawnPositions[
+        playerIndex
+      ];
 
     // Get player color
-    const color = this.playerColors[playerIndex];
+    const color =
+      this.playerColors[
+        playerIndex
+      ];
 
     const player: Player = {
-      id: client.sessionId,
-      x: spawn.x,
-      y: spawn.y,
-      playerIndex: playerIndex,
-      color: color
+
+      id:
+        client.sessionId,
+
+      x:
+        spawn.x,
+
+      y:
+        spawn.y,
+
+      playerIndex:
+        playerIndex,
+
+      color:
+        color
     };
 
-    // Add player to room
-    this.players.set(client.sessionId, player);
-
-    console.log(
-      `Player ${playerIndex + 1} joined at (${spawn.x}, ${spawn.y})`
+    // Store player
+    this.players.set(
+      client.sessionId,
+      player
     );
 
-    // Send existing players to the new player
-    for (const existingPlayer of this.players.values()) {
-      if (existingPlayer.id !== client.sessionId) {
-        client.send("playerJoined", existingPlayer);
+    console.log(
+      `Player ${
+        playerIndex + 1
+      } joined at (${
+        spawn.x
+      }, ${
+        spawn.y
+      })`
+    );
+
+    // --------------------------------------
+    // SEND EXISTING PLAYERS
+    // TO NEW PLAYER
+    // --------------------------------------
+
+    for (
+      const existingPlayer
+      of this.players.values()
+    ) {
+
+      if (
+        existingPlayer.id !==
+        client.sessionId
+      ) {
+
+        client.send(
+          "playerJoined",
+          existingPlayer
+        );
       }
     }
 
-    // Tell all other players about the new player
+    // --------------------------------------
+    // TELL OTHER PLAYERS
+    // ABOUT NEW PLAYER
+    // --------------------------------------
+
     this.broadcast(
       "playerJoined",
       player,
@@ -102,22 +191,41 @@ export class GameRoom extends Room {
     );
   }
 
+  // ----------------------------------------
+  // PLAYER LEFT
+  // ----------------------------------------
+
   onLeave(client: Client) {
-    console.log("Player left:", client.sessionId);
 
-    const player = this.players.get(client.sessionId);
+    console.log(
+      "Player left:",
+      client.sessionId
+    );
 
-    this.players.delete(client.sessionId);
+    const player =
+      this.players.get(
+        client.sessionId
+      );
+
+    this.players.delete(
+      client.sessionId
+    );
 
     if (player) {
+
       console.log(
-        `Player ${player.playerIndex + 1} left the room`
+        `Player ${
+          player.playerIndex + 1
+        } left the room`
       );
     }
 
-    // Tell remaining players
-    this.broadcast("playerLeft", {
-      id: client.sessionId
-    });
+    this.broadcast(
+      "playerLeft",
+      {
+        id:
+          client.sessionId
+      }
+    );
   }
 }
