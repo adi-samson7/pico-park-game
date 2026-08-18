@@ -116,7 +116,7 @@ export class LobbyScene extends Phaser.Scene {
       this.add.text(
         400,
         190,
-        "",
+        "ROOM CODE: ------",
         {
           fontSize: "26px",
           color: "#ffffff",
@@ -202,16 +202,14 @@ export class LobbyScene extends Phaser.Scene {
       }
 
       // ======================================
-      // IMPORTANT
+      // SET LISTENERS
       // ======================================
-      //
-      // Set listeners first.
-      //
 
       this.setupRoomListeners();
 
-      // Then create UI.
-      //
+      // ======================================
+      // CREATE BUTTONS
+      // ======================================
 
       this.createLobbyButtons();
 
@@ -243,19 +241,18 @@ export class LobbyScene extends Phaser.Scene {
   private setupRoomListeners() {
 
     // ----------------------------------------
-    // ROOM INFO
+    // ROOM CODE
     // ----------------------------------------
 
     this.room.onMessage(
-      "roomInfo",
+      "roomCode",
       (data: {
-        roomId: string;
         roomCode: string;
       }) => {
 
         console.log(
-          "Room info:",
-          data
+          "Received room code:",
+          data.roomCode
         );
 
         this.roomCode =
@@ -376,60 +373,73 @@ export class LobbyScene extends Phaser.Scene {
     );
 
     // ----------------------------------------
+    // ALL PLAYERS READY
+    // ----------------------------------------
+
+    this.room.onMessage(
+      "allPlayersReady",
+      (data: {
+        allReady: boolean;
+      }) => {
+
+        console.log(
+          "All players ready:",
+          data.allReady
+        );
+
+        this.updateStartButton();
+      }
+    );
+
+    // ----------------------------------------
     // GAME STARTED
     // ----------------------------------------
 
     this.room.onMessage(
-    "gameStarted",
-    (data: {
-      roomId: string;
-      roomCode: string;
-    }) => {
+      "gameStarted",
+      () => {
 
-      console.log(
-        "Game started!",
-        data
-      );
-
-      // Convert our player Map into an array.
-      const players =
-        Array.from(
-          this.players.values()
+        console.log(
+          "Game started!"
         );
 
-      // Find ourselves.
-      const myPlayer =
-        this.players.get(
-          this.room.sessionId
+        const players =
+          Array.from(
+            this.players.values()
+          );
+
+        const myPlayer =
+          this.players.get(
+            this.room.sessionId
+          );
+
+        console.log(
+          "Sending players to GameScene:",
+          players
         );
 
-      console.log(
-        "Sending players to GameScene:",
-        players
-      );
+        console.log(
+          "My player:",
+          myPlayer
+        );
 
-      console.log(
-        "My player:",
-        myPlayer
-      );
+        this.clearLobbyUI();
 
-      this.clearLobbyUI();
+        this.scene.start(
+          "GameScene",
+          {
+            room:
+              this.room,
 
-      this.scene.start(
-        "GameScene",
-        {
-          room:
-            this.room,
+            players:
+              players,
 
-          players:
-            players,
-
-          myPlayer:
-            myPlayer
-        }
-      );
-    }
-  );
+            myPlayer:
+              myPlayer
+          }
+        );
+      }
+    );
 
     // ----------------------------------------
     // START GAME ERROR
@@ -459,10 +469,6 @@ export class LobbyScene extends Phaser.Scene {
 
   private updatePlayerList() {
 
-    // ----------------------------------------
-    // REMOVE OLD PLAYER TEXT
-    // ----------------------------------------
-
     for (
       const text
       of this.playerTexts.values()
@@ -484,10 +490,6 @@ export class LobbyScene extends Phaser.Scene {
 
     this.playerTexts.clear();
 
-    // ----------------------------------------
-    // SORT PLAYERS
-    // ----------------------------------------
-
     const sortedPlayers =
       Array.from(
         this.players.values()
@@ -496,10 +498,6 @@ export class LobbyScene extends Phaser.Scene {
           a.playerIndex -
           b.playerIndex
       );
-
-    // ----------------------------------------
-    // DISPLAY PLAYERS
-    // ----------------------------------------
 
     for (
       const player
@@ -553,10 +551,6 @@ export class LobbyScene extends Phaser.Scene {
                 : "normal"
           }
         ).setOrigin(0.5);
-
-      // --------------------------------------
-      // COLOR INDICATOR
-      // --------------------------------------
 
       const indicator =
         this.add.circle(
@@ -640,15 +634,7 @@ export class LobbyScene extends Phaser.Scene {
       return;
     }
 
-    // ----------------------------------------
-    // ONLY HOST USES THIS BUTTON
-    // ----------------------------------------
-    //
-    // The creator of the room is the host.
-    //
-    // We use "create" here instead of
-    // relying on playerJoinedSelf timing.
-    //
+    // Only host has START button.
 
     if (
       this.mode !== "create"
@@ -661,16 +647,8 @@ export class LobbyScene extends Phaser.Scene {
         this.players.values()
       );
 
-    // ----------------------------------------
-    // REQUIRE AT LEAST 2 PLAYERS
-    // ----------------------------------------
-
     const enoughPlayers =
       playerList.length >= 2;
-
-    // ----------------------------------------
-    // CHECK EVERYONE READY
-    // ----------------------------------------
 
     const everyoneReady =
       enoughPlayers &&
@@ -693,9 +671,7 @@ export class LobbyScene extends Phaser.Scene {
     } else {
 
       this.startButton.setText(
-        enoughPlayers
-          ? "WAITING FOR PLAYERS"
-          : "WAITING FOR PLAYERS"
+        "WAITING FOR PLAYERS"
       );
 
       this.startButton.setStyle({
@@ -786,13 +762,6 @@ export class LobbyScene extends Phaser.Scene {
     // ----------------------------------------
     // START BUTTON
     // ----------------------------------------
-    //
-    // IMPORTANT:
-    // Create this based on the mode,
-    // NOT on players.get().
-    //
-    // This fixes the timing problem.
-    //
 
     if (
       this.mode === "create"
@@ -862,21 +831,38 @@ export class LobbyScene extends Phaser.Scene {
             return;
           }
 
-          this.errorText.setText("");
+          const playerList =
+            Array.from(
+              this.players.values()
+            );
+
+          const everyoneReady =
+            playerList.length >= 2 &&
+            playerList.every(
+              player =>
+                player.ready
+            );
+
+          if (!everyoneReady) {
+
+            this.errorText.setText(
+              "Everyone must be ready first."
+            );
+
+            return;
+          }
 
           console.log(
             "Host clicked START GAME"
           );
+
+          this.errorText.setText("");
 
           this.room.send(
             "startGame"
           );
         }
       );
-
-      // Initial state.
-
-      this.updateStartButton();
     }
 
     // ----------------------------------------
@@ -948,10 +934,6 @@ export class LobbyScene extends Phaser.Scene {
         );
       }
     );
-
-    // ----------------------------------------
-    // INITIAL UI UPDATE
-    // ----------------------------------------
 
     this.updateReadyButton();
     this.updateStartButton();

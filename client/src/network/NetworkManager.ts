@@ -1,4 +1,7 @@
-import { Client, Room } from "@colyseus/sdk";
+import {
+  Client,
+  Room
+} from "@colyseus/sdk";
 
 export class NetworkManager {
 
@@ -37,6 +40,11 @@ export class NetworkManager {
       this.room.roomId
     );
 
+    console.log(
+      "Session ID:",
+      this.room.sessionId
+    );
+
     return this.room;
   }
 
@@ -44,7 +52,7 @@ export class NetworkManager {
   // FIND ROOM BY CODE
   // ==========================================
 
-  async findRoom(
+  async findRoomByCode(
     roomCode: string
   ): Promise<string> {
 
@@ -52,6 +60,13 @@ export class NetworkManager {
       roomCode
         .trim()
         .toUpperCase();
+
+    if (code.length !== 6) {
+      throw new Error(
+        "Room code must be exactly 6 characters."
+      );
+    }
+    
 
     console.log(
       "Looking for room:",
@@ -68,13 +83,11 @@ export class NetworkManager {
       const data =
         await response
           .json()
-          .catch(
-            () => ({})
-          );
+          .catch(() => ({}));
 
       throw new Error(
         data.error ||
-        "Room not found"
+        "Room not found."
       );
     }
 
@@ -90,7 +103,7 @@ export class NetworkManager {
   }
 
   // ==========================================
-  // JOIN ROOM BY CODE
+  // JOIN BY ROOM CODE
   // ==========================================
 
   async joinRoomByCode(
@@ -98,12 +111,25 @@ export class NetworkManager {
   ): Promise<Room> {
 
     const roomId =
-      await this.findRoom(
+      await this.findRoomByCode(
         roomCode
       );
 
+    return this.joinRoomById(
+      roomId
+    );
+  }
+
+  // ==========================================
+  // JOIN BY COLYSEUS ROOM ID
+  // ==========================================
+
+  async joinRoomById(
+    roomId: string
+  ): Promise<Room> {
+
     console.log(
-      "Joining Colyseus room:",
+      "Joining room:",
       roomId
     );
 
@@ -117,11 +143,16 @@ export class NetworkManager {
       this.room.roomId
     );
 
+    console.log(
+      "Session ID:",
+      this.room.sessionId
+    );
+
     return this.room;
   }
 
   // ==========================================
-  // LEAVE ROOM
+  // LEAVE
   // ==========================================
 
   async leaveRoom() {

@@ -1,48 +1,37 @@
 import { Room, Client } from "colyseus";
 
+import {
+  registerRoom,
+  findRoom,
+  removeRoom
+} from "../roomRegistry.js";
+
+// ==========================================
+// PLAYER DATA
+// ==========================================
+
 interface Player {
   id: string;
-
   x: number;
   y: number;
-
-  velocityX: number;
-  velocityY: number;
-
-  left: boolean;
-  right: boolean;
-
   playerIndex: number;
   color: number;
   ready: boolean;
 }
 
+// ==========================================
+// GAME ROOM
+// ==========================================
+
 export class GameRoom extends Room {
 
   maxClients = 4;
 
-  players: Map<string, Player> = new Map();
+  players:
+    Map<string, Player> =
+    new Map();
 
-  private gameStarted = false;
-
-  roomCode = "";
-
-  static roomsByCode:
-    Map<string, GameRoom> = new Map();
-
-  // ========================================
-  // PHYSICS
-  // ========================================
-
-  private readonly GRAVITY = 1200;
-  private readonly MOVE_SPEED = 250;
-  private readonly JUMP_SPEED = -500;
-
-  // Phaser player is 40x60.
-  // Ground top = 525.
-  // Player center = 495.
-
-  private readonly GROUND_Y = 495;
+  roomCode: string = "";
 
   // ========================================
   // SPAWN POSITIONS
@@ -56,18 +45,43 @@ export class GameRoom extends Room {
   ];
 
   // ========================================
-  // COLORS
+  // PLAYER COLORS
   // ========================================
 
   private playerColors = [
-    0xff4444,
-    0x4488ff,
-    0x44cc66,
-    0xffcc33
+    0xff4444, // P1 - Red
+    0x4488ff, // P2 - Blue
+    0x44cc66, // P3 - Green
+    0xffcc33  // P4 - Yellow
   ];
 
   // ========================================
-  // CREATE
+  // GENERATE ROOM CODE
+  // ========================================
+
+  private generateRoomCode(): string {
+
+    const characters =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+    let code = "";
+
+    for (let i = 0; i < 6; i++) {
+
+      code +=
+        characters[
+          Math.floor(
+            Math.random() *
+            characters.length
+          )
+        ];
+    }
+
+    return code;
+  }
+
+  // ========================================
+  // ROOM CREATED
   // ========================================
 
   onCreate() {
@@ -77,46 +91,37 @@ export class GameRoom extends Room {
       this.roomId
     );
 
-    // Generate room code
+    // --------------------------------------
+    // Generate 6-character code
+    // --------------------------------------
 
     this.roomCode =
       this.generateRoomCode();
-
-    GameRoom.roomsByCode.set(
-      this.roomCode,
-      this
-    );
 
     console.log(
       "Room code:",
       this.roomCode
     );
 
-    // ======================================
-    // SERVER GAME LOOP
-    // ======================================
+    // --------------------------------------
+    // Register code -> room ID
+    // --------------------------------------
 
-    this.setSimulationInterval(
-      (deltaTime) => {
-
-        if (!this.gameStarted) {
-          return;
-        }
-
-        this.updatePhysics(
-          deltaTime
-        );
-      },
-      1000 / 60
+    registerRoom(
+      this.roomCode,
+      this.roomId
     );
 
     // ======================================
-    // PLAYER INPUT
+    // MOVE
     // ======================================
 
     this.onMessage(
-      "input",
-      (client, message) => {
+      "move",
+      (
+        client,
+        message
+      ) => {
 
         const player =
           this.players.get(
@@ -127,44 +132,40 @@ export class GameRoom extends Room {
           return;
         }
 
-        // Store keyboard state.
-
-        player.left =
-          Boolean(message?.left);
-
-        player.right =
-          Boolean(message?.right);
-
-        // Jump is handled as an event.
-
+        // Basic validation
         if (
-          Boolean(message?.jump)
+          typeof message?.x !== "number" ||
+          typeof message?.y !== "number"
         ) {
-
-          const onGround =
-            player.y >=
-            this.GROUND_Y - 1;
-
-          if (onGround) {
-
-            player.velocityY =
-              this.JUMP_SPEED;
-          }
+          return;
         }
+
+        player.x =
+          message.x;
+
+        player.y =
+          message.y;
+
+        // Send movement to everyone
+        // except the player who moved.
+
+        this.broadcast(
+          "playerMoved",
+          player,
+          {
+            except: client
+          }
+        );
       }
     );
 
     // ======================================
-    // READY
+    // TOGGLE READY
     // ======================================
 
     this.onMessage(
       "toggleReady",
       (client) => {
-
-        if (this.gameStarted) {
-          return;
-        }
 
         const player =
           this.players.get(
@@ -186,14 +187,73 @@ export class GameRoom extends Room {
           }`
         );
 
+        // Tell everyone
         this.broadcast(
           "playerReadyChanged",
           {
-            id:
-              player.id,
+            id: player.id,
+            ready: player.ready
+          }
+        );
 
-            ready:
-              player.ready
+        this.checkAllReady();
+      }
+    );
+
+    // ======================================
+    // GET ROOM CODE
+    // ======================================
+
+    this.onMessage(
+      "getRoomCode",
+      (client) => {
+
+        client.send(
+          "roomCode",
+          {
+            roomCode:
+              this.roomCode
+          }
+        );
+      }
+    );
+
+    // ======================================
+    // FIND ROOM BY CODE
+    // ======================================
+
+    this.onMessage(
+      "findRoom",
+      (client, message) => {
+
+        const roomCode =
+          String(
+            message?.roomCode || ""
+          )
+            .trim()
+            .toUpperCase();
+
+        console.log(
+          "Room lookup requested:",
+          roomCode
+        );
+
+        const roomId =
+          findRoom(roomCode);
+
+        if (!roomId) {
+
+          client.send(
+            "roomNotFound"
+          );
+
+          return;
+        }
+
+        client.send(
+          "roomFound",
+          {
+            roomId
           }
         );
       }
@@ -207,10 +267,6 @@ export class GameRoom extends Room {
       "startGame",
       (client) => {
 
-        if (this.gameStarted) {
-          return;
-        }
-
         const player =
           this.players.get(
             client.sessionId
@@ -220,250 +276,91 @@ export class GameRoom extends Room {
           return;
         }
 
-        // Only Player 1 / host.
-
+        // Only P1 can start
         if (
           player.playerIndex !== 0
         ) {
 
-          client.send(
-            "startGameError",
-            {
-              message:
-                "Only the host can start the game."
-            }
+          console.log(
+            "Non-host attempted to start game."
           );
 
           return;
         }
 
-        // At least two players.
-
+        // Everyone must be ready
         if (
-          this.players.size < 2
+          !this.areAllPlayersReady()
         ) {
 
-          client.send(
-            "startGameError",
-            {
-              message:
-                "At least 2 players are required."
-            }
+          console.log(
+            "Cannot start: not everyone is ready."
           );
 
           return;
         }
 
-        // Everyone must be ready.
+        console.log(
+          "Starting game..."
+        );
 
-        const everyoneReady =
-          Array.from(
-            this.players.values()
-          ).every(
-            player =>
-              player.ready
-          );
-
-        if (!everyoneReady) {
-
-          client.send(
-            "startGameError",
-            {
-              message:
-                "Everyone must be ready."
-            }
-          );
-
-          return;
-        }
-
-        this.startGame();
+        this.broadcast(
+          "gameStarted"
+        );
       }
     );
   }
 
   // ========================================
-  // PHYSICS UPDATE
+  // CHECK ALL PLAYERS READY
   // ========================================
 
-  private updatePhysics(
-    deltaTime: number
-  ) {
+  private areAllPlayersReady():
+    boolean {
 
-    const delta =
-      deltaTime / 1000;
+    if (
+      this.players.size === 0
+    ) {
+      return false;
+    }
 
     for (
       const player
       of this.players.values()
     ) {
 
-      // ------------------------------------
-      // HORIZONTAL MOVEMENT
-      // ------------------------------------
-
-      if (
-        player.left &&
-        !player.right
-      ) {
-
-        player.velocityX =
-          -this.MOVE_SPEED;
-
-      } else if (
-        player.right &&
-        !player.left
-      ) {
-
-        player.velocityX =
-          this.MOVE_SPEED;
-
-      } else {
-
-        player.velocityX = 0;
+      if (!player.ready) {
+        return false;
       }
-
-      // ------------------------------------
-      // GRAVITY
-      // ------------------------------------
-
-      player.velocityY +=
-        this.GRAVITY *
-        delta;
-
-      // ------------------------------------
-      // POSITION
-      // ------------------------------------
-
-      player.x +=
-        player.velocityX *
-        delta;
-
-      player.y +=
-        player.velocityY *
-        delta;
-
-      // ------------------------------------
-      // GROUND COLLISION
-      // ------------------------------------
-
-      if (
-        player.y >=
-        this.GROUND_Y
-      ) {
-
-        player.y =
-          this.GROUND_Y;
-
-        player.velocityY = 0;
-      }
-
-      // ------------------------------------
-      // WORLD BOUNDS
-      // ------------------------------------
-
-      if (player.x < 20) {
-        player.x = 20;
-      }
-
-      if (player.x > 780) {
-        player.x = 780;
-      }
-
-      // ------------------------------------
-      // BROADCAST POSITION
-      // ------------------------------------
-
-      this.broadcast(
-        "playerMoved",
-        {
-          id:
-            player.id,
-
-          x:
-            player.x,
-
-          y:
-            player.y
-        }
-      );
     }
+
+    return true;
   }
 
   // ========================================
-  // START GAME
+  // BROADCAST READY STATUS
   // ========================================
 
-  private startGame() {
+  private checkAllReady() {
 
-    if (this.gameStarted) {
-      return;
-    }
-
-    this.gameStarted = true;
-
-    console.log(
-      "Starting game:",
-      this.roomCode
-    );
+    const allReady =
+      this.areAllPlayersReady();
 
     this.broadcast(
-      "gameStarted",
+      "allPlayersReady",
       {
-        roomId:
-          this.roomId,
-
-        roomCode:
-          this.roomCode
+        allReady
       }
     );
-  }
-
-  // ========================================
-  // ROOM CODE
-  // ========================================
-
-  private generateRoomCode(): string {
-
-    const characters =
-      "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
-    let code = "";
-
-    do {
-
-      code = "";
-
-      for (
-        let i = 0;
-        i < 6;
-        i++
-      ) {
-
-        const index =
-          Math.floor(
-            Math.random() *
-            characters.length
-          );
-
-        code +=
-          characters[index];
-      }
-
-    } while (
-      GameRoom.roomsByCode.has(
-        code
-      )
-    );
-
-    return code;
   }
 
   // ========================================
   // PLAYER JOINED
   // ========================================
 
-  onJoin(client: Client) {
+  onJoin(
+    client: Client
+  ) {
 
     console.log(
       "Player joined:",
@@ -471,7 +368,7 @@ export class GameRoom extends Room {
     );
 
     // --------------------------------------
-    // FIND AVAILABLE SLOT
+    // Find free player index
     // --------------------------------------
 
     const usedIndexes =
@@ -495,20 +392,18 @@ export class GameRoom extends Room {
       playerIndex++;
     }
 
-    if (
-      playerIndex >=
-      this.spawnPositions.length
-    ) {
-
-      throw new Error(
-        "No available player slot."
-      );
-    }
+    // --------------------------------------
+    // Get spawn position
+    // --------------------------------------
 
     const spawn =
       this.spawnPositions[
         playerIndex
       ];
+
+    // --------------------------------------
+    // Get player color
+    // --------------------------------------
 
     const color =
       this.playerColors[
@@ -516,7 +411,7 @@ export class GameRoom extends Room {
       ];
 
     // --------------------------------------
-    // CREATE PLAYER
+    // Create player
     // --------------------------------------
 
     const player: Player = {
@@ -530,35 +425,42 @@ export class GameRoom extends Room {
       y:
         spawn.y,
 
-      velocityX:
-        0,
+      playerIndex,
 
-      velocityY:
-        0,
-
-      left:
-        false,
-
-      right:
-        false,
-
-      playerIndex:
-        playerIndex,
-
-      color:
-        color,
+      color,
 
       ready:
         false
     };
 
     // --------------------------------------
-    // STORE
+    // Store player
     // --------------------------------------
 
     this.players.set(
       client.sessionId,
       player
+    );
+
+    // --------------------------------------
+    // Send own player information
+    // --------------------------------------
+
+    client.send(
+      "playerJoinedSelf",
+      player
+    );
+
+    // --------------------------------------
+    // Send room code
+    // --------------------------------------
+
+    client.send(
+      "roomCode",
+      {
+        roomCode:
+          this.roomCode
+      }
     );
 
     console.log(
@@ -571,33 +473,9 @@ export class GameRoom extends Room {
       })`
     );
 
-    // --------------------------------------
-    // SEND OWN DATA
-    // --------------------------------------
-
-    client.send(
-      "playerJoinedSelf",
-      player
-    );
-
-    // --------------------------------------
-    // ROOM INFO
-    // --------------------------------------
-
-    client.send(
-      "roomInfo",
-      {
-        roomId:
-          this.roomId,
-
-        roomCode:
-          this.roomCode
-      }
-    );
-
-    // --------------------------------------
+    // ======================================
     // SEND EXISTING PLAYERS
-    // --------------------------------------
+    // ======================================
 
     for (
       const existingPlayer
@@ -616,9 +494,9 @@ export class GameRoom extends Room {
       }
     }
 
-    // --------------------------------------
-    // INFORM OTHER CLIENTS
-    // --------------------------------------
+    // ======================================
+    // TELL OTHER PLAYERS
+    // ======================================
 
     this.broadcast(
       "playerJoined",
@@ -627,23 +505,67 @@ export class GameRoom extends Room {
         except: client
       }
     );
+
+    // ======================================
+    // SEND READY STATES
+    // ======================================
+
+    for (
+      const existingPlayer
+      of this.players.values()
+    ) {
+
+      client.send(
+        "playerReadyChanged",
+        {
+          id:
+            existingPlayer.id,
+
+          ready:
+            existingPlayer.ready
+        }
+      );
+    }
+
+    // ======================================
+    // SEND CURRENT ROOM STATE
+    // ======================================
+
+    this.checkAllReady();
   }
 
   // ========================================
   // PLAYER LEFT
   // ========================================
 
-  onLeave(client: Client) {
+  onLeave(
+    client: Client
+  ) {
 
     console.log(
       "Player left:",
       client.sessionId
     );
 
+    const player =
+      this.players.get(
+        client.sessionId
+      );
+
     this.players.delete(
       client.sessionId
     );
 
+    if (player) {
+
+      console.log(
+        `Player ${
+          player.playerIndex + 1
+        } left the room`
+      );
+    }
+
+    // Tell remaining players
     this.broadcast(
       "playerLeft",
       {
@@ -651,10 +573,12 @@ export class GameRoom extends Room {
           client.sessionId
       }
     );
+
+    this.checkAllReady();
   }
 
   // ========================================
-  // DISPOSE
+  // ROOM DISPOSED
   // ========================================
 
   onDispose() {
@@ -664,8 +588,11 @@ export class GameRoom extends Room {
       this.roomId
     );
 
-    GameRoom.roomsByCode.delete(
-      this.roomCode
-    );
+    if (this.roomCode) {
+
+      removeRoom(
+        this.roomCode
+      );
+    }
   }
 }
