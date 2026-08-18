@@ -9,28 +9,30 @@ interface PlayerData {
   id: string;
   x: number;
   y: number;
+  vx?: number;
+  vy?: number;
   playerIndex: number;
   color: number;
   ready: boolean;
 }
 
 // ==========================================
-// REMOTE PLAYER
+// GAME STATE
 // ==========================================
 
-interface RemotePlayer {
-  id: string;
-  sprite: Phaser.Physics.Arcade.Sprite;
+interface Collectible {
+  id: number;
+  x: number;
+  y: number;
+  collected: boolean;
 }
 
-// ==========================================
-// GAME SCENE DATA
-// ==========================================
-
-interface GameSceneData {
-  room: Room;
-  players: PlayerData[];
-  myPlayer?: PlayerData;
+interface GameState {
+  score: number;
+  targetScore: number;
+  collectibles?: Collectible[];
+  gameStarted?: boolean;
+  gameFinished?: boolean;
 }
 
 // ==========================================
@@ -39,26 +41,78 @@ interface GameSceneData {
 
 export class GameScene extends Phaser.Scene {
 
-  private player!:
-    Phaser.Physics.Arcade.Sprite;
+  // ========================================
+  // NETWORK
+  // ========================================
+
+  private room!: Room;
+
+  // ========================================
+  // PLAYERS
+  // ========================================
+
+  private localPlayer:
+    Phaser.Physics.Arcade.Sprite | null =
+    null;
+
+  private remotePlayers:
+    Map<
+      string,
+      Phaser.Physics.Arcade.Sprite
+    > =
+    new Map();
+
+  private playerData:
+    Map<string, PlayerData> =
+    new Map();
+
+  // ========================================
+  // INPUT
+  // ========================================
 
   private cursors!:
     Phaser.Types.Input.Keyboard.CursorKeys;
 
-  private room!: Room;
+  private keys!: {
+    A: Phaser.Input.Keyboard.Key;
+    D: Phaser.Input.Keyboard.Key;
+    W: Phaser.Input.Keyboard.Key;
+  };
 
-  private players:
-    PlayerData[] = [];
-
-  private myPlayerData!:
-    PlayerData;
-
-  private remotePlayers:
-    Map<string, RemotePlayer> =
-    new Map();
+  // ========================================
+  // WORLD
+  // ========================================
 
   private ground!:
-    Phaser.Physics.Arcade.StaticBody;
+    Phaser.GameObjects.Rectangle;
+
+  // ========================================
+  // UI
+  // ========================================
+
+  private scoreText!:
+    Phaser.GameObjects.Text;
+
+  private statusText!:
+    Phaser.GameObjects.Text;
+
+  private gameOverText!:
+    Phaser.GameObjects.Text;
+
+  // ========================================
+  // COLLECTIBLES
+  // ========================================
+
+  private collectibleSprites:
+    Map<
+      number,
+      Phaser.GameObjects.Arc
+    > =
+    new Map();
+
+  // ========================================
+  // INPUT STATE
+  // ========================================
 
   private lastInput = {
     left: false,
@@ -66,10 +120,15 @@ export class GameScene extends Phaser.Scene {
     jump: false
   };
 
+  // ========================================
+  // CONSTRUCTOR
+  // ========================================
+
   constructor() {
 
-    super("GameScene");
-
+    super({
+      key: "GameScene"
+    });
   }
 
   // ==========================================
@@ -77,52 +136,89 @@ export class GameScene extends Phaser.Scene {
   // ==========================================
 
   init(
-    data: GameSceneData
+    data: {
+      room?: Room;
+      players?: PlayerData[];
+      myPlayer?: PlayerData;
+    }
   ) {
 
-    this.room =
-      data.room;
+    console.log(
+      "================================"
+    );
 
-    this.players =
-      data.players || [];
+    console.log(
+      "GameScene INIT"
+    );
+
+    console.log(
+      "Received data:",
+      data
+    );
+
+    console.log(
+      "================================"
+    );
+
+    // ----------------------------------------
+    // GET EXISTING ROOM
+    // ----------------------------------------
+
+    if (data.room) {
+
+      this.room =
+        data.room;
+
+      console.log(
+        "GameScene received existing room:",
+        this.room.roomId
+      );
+
+      console.log(
+        "GameScene session ID:",
+        this.room.sessionId
+      );
+    }
+
+    // ----------------------------------------
+    // GET PLAYERS FROM LOBBY
+    // ----------------------------------------
+
+    if (data.players) {
+
+      for (
+        const player
+        of data.players
+      ) {
+
+        this.playerData.set(
+          player.id,
+          player
+        );
+      }
+
+      console.log(
+        "GameScene received players:",
+        data.players
+      );
+    }
+
+    // ----------------------------------------
+    // ENSURE OUR PLAYER EXISTS
+    // ----------------------------------------
 
     if (data.myPlayer) {
 
-      this.myPlayerData =
-        data.myPlayer;
+      this.playerData.set(
+        data.myPlayer.id,
+        data.myPlayer
+      );
 
+      console.log(
+        "GameScene received my player:",
+        data.myPlayer
+      );
     }
-
-    if (!this.myPlayerData) {
-
-      const me =
-        this.players.find(
-          player =>
-            player.id ===
-            this.room.sessionId
-        );
-
-      if (me) {
-
-        this.myPlayerData =
-          me;
-
-      }
-    }
-
-    console.log(
-      "GameScene initialized"
-    );
-
-    console.log(
-      "Room:",
-      this.room.roomId
-    );
-
-    console.log(
-      "My player:",
-      this.myPlayerData
-    );
   }
 
   // ==========================================
@@ -131,82 +227,71 @@ export class GameScene extends Phaser.Scene {
 
   create() {
 
-    this.createPlayerTexture();
-
-    this.createWorld();
-
-    this.cursors =
-      this.input.keyboard!.createCursorKeys();
+    console.log(
+      "Starting GameScene..."
+    );
 
     // ----------------------------------------
-    // APPLY SERVER SPAWN
+    // SAFETY CHECK
     // ----------------------------------------
 
-    if (
-      this.myPlayerData
-    ) {
+    if (!this.room) {
 
-      this.player.setPosition(
-        this.myPlayerData.x,
-        this.myPlayerData.y
+      console.error(
+        "GameScene ERROR: No Colyseus room was provided."
       );
 
-      this.player.setTint(
-        this.myPlayerData.color
-      );
+      this.add.text(
+        400,
+        300,
+        "Game connection error",
+        {
+          fontSize: "32px",
+          color: "#ff4444"
+        }
+      ).setOrigin(0.5);
+
+      return;
     }
 
     // ----------------------------------------
-    // CREATE OTHER PLAYERS
+    // WORLD
+    // ----------------------------------------
+
+    this.createWorld();
+
+    // ----------------------------------------
+    // INPUT
+    // ----------------------------------------
+
+    this.createInput();
+
+    // ----------------------------------------
+    // UI
+    // ----------------------------------------
+
+    this.createUI();
+
+    // ----------------------------------------
+    // CREATE ALL PLAYERS
     // ----------------------------------------
 
     this.createExistingPlayers();
 
     // ----------------------------------------
-    // NETWORK
+    // NETWORK LISTENERS
     // ----------------------------------------
 
-    this.setupRoomListeners();
-  }
+    this.setupNetwork();
 
-  // ==========================================
-  // PLAYER TEXTURE
-  // ==========================================
-
-  private createPlayerTexture() {
-
-    if (
-      this.textures.exists(
-        "player"
-      )
-    ) {
-
-      return;
-
-    }
-
-    const graphics =
-      this.add.graphics();
-
-    graphics.fillStyle(
-      0xffffff,
-      1
+    console.log(
+      "GameScene ready."
     );
 
-    graphics.fillRect(
-      0,
-      0,
-      40,
-      60
+    console.log(
+      "Players currently in GameScene:",
+      this.playerData.size
     );
-
-    graphics.generateTexture(
-      "player",
-      40,
-      60
-    );
-
-    graphics.destroy();
   }
 
   // ==========================================
@@ -215,80 +300,176 @@ export class GameScene extends Phaser.Scene {
 
   private createWorld() {
 
-    this.player =
-      this.physics.add.sprite(
-        250,
-        300,
-        "player"
-      );
-
-    this.player.setTint(
-      0xffffff
-    );
-
-    this.player.setCollideWorldBounds(
-      true
+    this.cameras.main.setBackgroundColor(
+      "#202020"
     );
 
     // ----------------------------------------
     // GROUND
     // ----------------------------------------
 
-    const ground =
+    this.ground =
       this.add.rectangle(
         400,
-        550,
+        570,
         800,
-        50,
+        60,
         0x333333
       );
 
     this.physics.add.existing(
-      ground,
+      this.ground,
       true
     );
 
-    this.ground =
-      ground.body as
-        Phaser.Physics.Arcade.StaticBody;
-
-    this.physics.add.collider(
-      this.player,
-      ground
+    console.log(
+      "Game world created."
     );
   }
 
   // ==========================================
-  // EXISTING PLAYERS
+  // INPUT
+  // ==========================================
+
+  private createInput() {
+
+    this.cursors =
+      this.input.keyboard!.createCursorKeys();
+
+    this.keys = {
+
+      A:
+        this.input.keyboard!.addKey(
+          Phaser.Input.Keyboard.KeyCodes.A
+        ),
+
+      D:
+        this.input.keyboard!.addKey(
+          Phaser.Input.Keyboard.KeyCodes.D
+        ),
+
+      W:
+        this.input.keyboard!.addKey(
+          Phaser.Input.Keyboard.KeyCodes.W
+        )
+    };
+  }
+
+  // ==========================================
+  // UI
+  // ==========================================
+
+  private createUI() {
+
+    this.scoreText =
+      this.add.text(
+        20,
+        20,
+        "Crystals: 0 / 10",
+        {
+          fontSize: "24px",
+          color: "#ffffff"
+        }
+      );
+
+    this.statusText =
+      this.add.text(
+        400,
+        20,
+        "CO-OP GAME",
+        {
+          fontSize: "24px",
+          color: "#ffffff"
+        }
+      ).setOrigin(0.5, 0);
+
+    this.gameOverText =
+      this.add.text(
+        400,
+        300,
+        "",
+        {
+          fontSize: "48px",
+          color: "#ffffff",
+          align: "center"
+        }
+      ).setOrigin(0.5);
+
+    this.gameOverText.setDepth(
+      100
+    );
+  }
+
+  // ==========================================
+  // CREATE EXISTING PLAYERS
   // ==========================================
 
   private createExistingPlayers() {
 
+    console.log(
+      "Creating existing players..."
+    );
+
+    // ----------------------------------------
+    // SORT BY PLAYER INDEX
+    // ----------------------------------------
+
+    const players =
+      Array.from(
+        this.playerData.values()
+      ).sort(
+        (a, b) =>
+          a.playerIndex -
+          b.playerIndex
+      );
+
+    // ----------------------------------------
+    // CREATE EACH PLAYER
+    // ----------------------------------------
+
     for (
       const player
-      of this.players
+      of players
     ) {
+
+      console.log(
+        "Creating player:",
+        player
+      );
 
       if (
         player.id ===
         this.room.sessionId
       ) {
 
-        continue;
+        this.createLocalPlayer(
+          player
+        );
 
+      } else {
+
+        this.createRemotePlayer(
+          player
+        );
       }
-
-      this.createRemotePlayer(
-        player
-      );
     }
+
+    console.log(
+      "Local player:",
+      this.localPlayer
+    );
+
+    console.log(
+      "Remote players:",
+      this.remotePlayers.size
+    );
   }
 
   // ==========================================
-  // NETWORK LISTENERS
+  // NETWORK
   // ==========================================
 
-  private setupRoomListeners() {
+  private setupNetwork() {
 
     // ========================================
     // PLAYER JOINED
@@ -300,16 +481,12 @@ export class GameScene extends Phaser.Scene {
         player: PlayerData
       ) => {
 
-        if (
-          player.id ===
-          this.room.sessionId
-        ) {
+        console.log(
+          "Player joined during game:",
+          player
+        );
 
-          return;
-
-        }
-
-        this.createRemotePlayer(
+        this.handlePlayer(
           player
         );
       }
@@ -330,7 +507,7 @@ export class GameScene extends Phaser.Scene {
       ) => {
 
         // ------------------------------------
-        // LOCAL PLAYER
+        // IGNORE OUR OWN MOVEMENT
         // ------------------------------------
 
         if (
@@ -338,40 +515,49 @@ export class GameScene extends Phaser.Scene {
           this.room.sessionId
         ) {
 
-          /*
-           * The server is authoritative.
-           *
-           * We don't calculate the final
-           * position locally anymore.
-           */
-
-          this.player.setPosition(
-            player.x,
-            player.y
-          );
-
           return;
         }
 
         // ------------------------------------
-        // REMOTE PLAYER
+        // FIND REMOTE PLAYER
         // ------------------------------------
 
-        const remotePlayer =
+        const sprite =
           this.remotePlayers.get(
             player.id
           );
 
-        if (!remotePlayer) {
+        if (!sprite) {
+
+          console.warn(
+            "Movement received for player that does not exist:",
+            player.id
+          );
 
           return;
-
         }
 
-        remotePlayer.sprite.setPosition(
-          player.x,
-          player.y
-        );
+        // ------------------------------------
+        // SMOOTH MOVEMENT
+        // ------------------------------------
+
+        this.tweens.add({
+
+          targets:
+            sprite,
+
+          x:
+            player.x,
+
+          y:
+            player.y,
+
+          duration:
+            50,
+
+          ease:
+            "Linear"
+        });
       }
     );
 
@@ -387,23 +573,222 @@ export class GameScene extends Phaser.Scene {
         }
       ) => {
 
-        const remotePlayer =
+        console.log(
+          "Player left:",
+          data.id
+        );
+
+        const sprite =
           this.remotePlayers.get(
             data.id
           );
 
-        if (!remotePlayer) {
+        if (sprite) {
 
-          return;
-
+          sprite.destroy();
         }
-
-        remotePlayer.sprite.destroy();
 
         this.remotePlayers.delete(
           data.id
         );
+
+        this.playerData.delete(
+          data.id
+        );
       }
+    );
+
+    // ========================================
+    // GAME STATE
+    // ========================================
+
+    this.room.onMessage(
+      "gameState",
+      (
+        state: GameState
+      ) => {
+
+        this.updateGameState(
+          state
+        );
+      }
+    );
+
+    // ========================================
+    // COLLECTIBLE
+    // ========================================
+
+    this.room.onMessage(
+      "collectibleCollected",
+      (
+        data: {
+          id: number;
+          score: number;
+        }
+      ) => {
+
+        const sprite =
+          this.collectibleSprites.get(
+            data.id
+          );
+
+        if (sprite) {
+
+          sprite.destroy();
+
+          this.collectibleSprites.delete(
+            data.id
+          );
+        }
+
+        this.scoreText.setText(
+          `Crystals: ${data.score} / 10`
+        );
+      }
+    );
+
+    // ========================================
+    // GAME ENDED
+    // ========================================
+
+    this.room.onMessage(
+      "gameEnded",
+      (
+        data: {
+          result: "win" | "lose";
+          score: number;
+          targetScore: number;
+        }
+      ) => {
+
+        this.gameOverText.setText(
+          data.result === "win"
+            ? "YOU WIN!\n\nAll crystals collected!"
+            : "YOU LOSE!"
+        );
+
+        this.statusText.setText(
+          "GAME OVER"
+        );
+      }
+    );
+  }
+
+  // ==========================================
+  // HANDLE PLAYER
+  // ==========================================
+
+  private handlePlayer(
+    player: PlayerData
+  ) {
+
+    // ----------------------------------------
+    // STORE DATA
+    // ----------------------------------------
+
+    this.playerData.set(
+      player.id,
+      player
+    );
+
+    // ----------------------------------------
+    // OUR PLAYER
+    // ----------------------------------------
+
+    if (
+      player.id ===
+      this.room.sessionId
+    ) {
+
+      if (!this.localPlayer) {
+
+        this.createLocalPlayer(
+          player
+        );
+
+      } else {
+
+        this.localPlayer.setPosition(
+          player.x,
+          player.y
+        );
+
+        this.localPlayer.setTint(
+          player.color
+        );
+      }
+
+      return;
+    }
+
+    // ----------------------------------------
+    // REMOTE PLAYER
+    // ----------------------------------------
+
+    if (
+      !this.remotePlayers.has(
+        player.id
+      )
+    ) {
+
+      this.createRemotePlayer(
+        player
+      );
+    }
+  }
+
+  // ==========================================
+  // CREATE LOCAL PLAYER
+  // ==========================================
+
+  private createLocalPlayer(
+    player: PlayerData
+  ) {
+
+    if (this.localPlayer) {
+
+      this.localPlayer.setPosition(
+        player.x,
+        player.y
+      );
+
+      this.localPlayer.setTint(
+        player.color
+      );
+
+      return;
+    }
+
+    const texture =
+      this.createPlayerTexture(
+        player.color
+      );
+
+    this.localPlayer =
+      this.physics.add.sprite(
+        player.x,
+        player.y,
+        texture
+      );
+
+    this.localPlayer.setTint(
+      player.color
+    );
+
+    this.localPlayer.setCollideWorldBounds(
+      true
+    );
+
+    this.physics.add.collider(
+      this.localPlayer,
+      this.ground
+    );
+
+    console.log(
+      `Local player created: P${
+        player.playerIndex + 1
+      }`,
+      player
     );
   }
 
@@ -415,14 +800,21 @@ export class GameScene extends Phaser.Scene {
     player: PlayerData
   ) {
 
+    // ----------------------------------------
+    // DON'T CREATE OURSELVES
+    // ----------------------------------------
+
     if (
       player.id ===
       this.room.sessionId
     ) {
 
       return;
-
     }
+
+    // ----------------------------------------
+    // PREVENT DUPLICATES
+    // ----------------------------------------
 
     if (
       this.remotePlayers.has(
@@ -431,14 +823,18 @@ export class GameScene extends Phaser.Scene {
     ) {
 
       return;
-
     }
+
+    const texture =
+      this.createPlayerTexture(
+        player.color
+      );
 
     const sprite =
       this.physics.add.sprite(
         player.x,
         player.y,
-        "player"
+        texture
       );
 
     sprite.setTint(
@@ -449,77 +845,140 @@ export class GameScene extends Phaser.Scene {
       true
     );
 
-    if (this.ground) {
-
-      this.physics.add.collider(
-        sprite,
-        this.ground
-      );
-
-    }
+    this.physics.add.collider(
+      sprite,
+      this.ground
+    );
 
     this.remotePlayers.set(
       player.id,
-      {
-        id:
-          player.id,
+      sprite
+    );
 
-        sprite:
-          sprite
-      }
+    console.log(
+      `Remote player created: P${
+        player.playerIndex + 1
+      }`,
+      player
     );
   }
 
   // ==========================================
-  // SEND INPUT
+  // CREATE PLAYER TEXTURE
   // ==========================================
 
-  private sendInput() {
+  private createPlayerTexture(
+    color: number
+  ): string {
 
-    if (!this.room) {
-
-      return;
-
-    }
-
-    const input = {
-
-      left:
-        this.cursors.left.isDown,
-
-      right:
-        this.cursors.right.isDown,
-
-      jump:
-        this.cursors.up.isDown
-    };
+    const key =
+      `player_${color}`;
 
     // ----------------------------------------
-    // DON'T SEND DUPLICATE INPUT
+    // DON'T CREATE DUPLICATE TEXTURE
     // ----------------------------------------
 
     if (
-      input.left ===
-        this.lastInput.left &&
-
-      input.right ===
-        this.lastInput.right &&
-
-      input.jump ===
-        this.lastInput.jump
+      this.textures.exists(key)
     ) {
 
-      return;
-
+      return key;
     }
 
-    this.lastInput =
-      input;
+    const graphics =
+      this.add.graphics();
 
-    this.room.send(
-      "input",
-      input
+    graphics.fillStyle(
+      color,
+      1
     );
+
+    graphics.fillRect(
+      0,
+      0,
+      40,
+      60
+    );
+
+    graphics.generateTexture(
+      key,
+      40,
+      60
+    );
+
+    graphics.destroy();
+
+    return key;
+  }
+
+  // ==========================================
+  // GAME STATE
+  // ==========================================
+
+  private updateGameState(
+    state: GameState
+  ) {
+
+    this.scoreText.setText(
+      `Crystals: ${
+        state.score
+      } / ${
+        state.targetScore ?? 10
+      }`
+    );
+
+    if (
+      state.collectibles
+    ) {
+
+      this.createCollectibles(
+        state.collectibles
+      );
+    }
+  }
+
+  // ==========================================
+  // CREATE COLLECTIBLES
+  // ==========================================
+
+  private createCollectibles(
+    collectibles: Collectible[]
+  ) {
+
+    for (
+      const collectible
+      of collectibles
+    ) {
+
+      if (
+        collectible.collected
+      ) {
+
+        continue;
+      }
+
+      if (
+        this.collectibleSprites.has(
+          collectible.id
+        )
+      ) {
+
+        continue;
+      }
+
+      const crystal =
+        this.add.circle(
+          collectible.x,
+          collectible.y,
+          12,
+          0x66ddff
+        );
+
+      this.collectibleSprites.set(
+        collectible.id,
+        crystal
+      );
+    }
   }
 
   // ==========================================
@@ -529,47 +988,94 @@ export class GameScene extends Phaser.Scene {
   update() {
 
     if (
-      !this.player ||
-      !this.cursors ||
+      !this.localPlayer ||
       !this.room
     ) {
 
       return;
-
     }
 
-    // ----------------------------------------
-    // NO LOCAL POSITION CALCULATION
-    // ----------------------------------------
-    //
-    // The server now handles:
-    //
-    // velocity
-    // gravity
-    // jumping
-    // ground collision
-    // world bounds
-    //
-    // ----------------------------------------
+    // ========================================
+    // INPUT
+    // ========================================
 
-    this.sendInput();
-  }
+    const left =
+      this.cursors.left.isDown ||
+      this.keys.A.isDown;
 
-  // ==========================================
-  // SHUTDOWN
-  // ==========================================
+    const right =
+      this.cursors.right.isDown ||
+      this.keys.D.isDown;
 
-  shutdown() {
+    const jump =
+      this.cursors.up.isDown ||
+      this.keys.W.isDown;
 
-    for (
-      const remotePlayer
-      of this.remotePlayers.values()
+    const input = {
+
+      left,
+      right,
+      jump
+    };
+
+    // ========================================
+    // SEND INPUT WHEN CHANGED
+    // ========================================
+
+    const changed =
+      left !== this.lastInput.left ||
+      right !== this.lastInput.right ||
+      jump !== this.lastInput.jump;
+
+    if (changed) {
+
+      this.room.send(
+        "input",
+        input
+      );
+
+      this.lastInput = {
+        left,
+        right,
+        jump
+      };
+    }
+
+    // ========================================
+    // CONTINUOUS MOVEMENT
+    // ========================================
+
+    if (
+      left ||
+      right
     ) {
 
-      remotePlayer.sprite.destroy();
-
+      this.room.send(
+        "input",
+        input
+      );
     }
 
-    this.remotePlayers.clear();
+    // ========================================
+    // RELEASE JUMP
+    // ========================================
+
+    if (
+      !jump &&
+      this.lastInput.jump
+    ) {
+
+      this.room.send(
+        "input",
+        {
+          left,
+          right,
+          jump: false
+        }
+      );
+
+      this.lastInput.jump =
+        false;
+    }
   }
 }

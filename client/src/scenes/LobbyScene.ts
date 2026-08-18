@@ -425,6 +425,11 @@ export class LobbyScene extends Phaser.Scene {
 
         this.clearLobbyUI();
 
+        this.registry.set(
+          "room",
+          this.room
+        );
+
         this.scene.start(
           "GameScene",
           {

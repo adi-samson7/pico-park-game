@@ -2,13 +2,14 @@ const roomRegistry =
   new Map<string, string>();
 
 // ==========================================
-// REGISTER
+// REGISTER ROOM
 // ==========================================
 
 export function registerRoom(
   roomCode: string,
   roomId: string
 ) {
+
   const code =
     roomCode
       .trim()
@@ -20,40 +21,53 @@ export function registerRoom(
   );
 
   console.log(
-    `Registered room ${code} -> ${roomId}`
+    `[Registry] Registered ${code} -> ${roomId}`
   );
 }
 
 // ==========================================
-// FIND
+// FIND ROOM
 // ==========================================
 
 export function findRoom(
   roomCode: string
 ): string | undefined {
 
-  return roomRegistry.get(
-    roomCode
-      .trim()
-      .toUpperCase()
-  );
-}
-
-// ==========================================
-// REMOVE
-// ==========================================
-
-export function removeRoom(
-  roomCode: string
-) {
   const code =
     roomCode
       .trim()
       .toUpperCase();
 
-  roomRegistry.delete(code);
+  const roomId =
+    roomRegistry.get(
+      code
+    );
 
   console.log(
-    `Removed room ${code}`
+    `[Registry] Lookup ${code} -> ${roomId ?? "NOT FOUND"}`
+  );
+
+  return roomId;
+}
+
+// ==========================================
+// REMOVE ROOM
+// ==========================================
+
+export function removeRoom(
+  roomCode: string
+) {
+
+  const code =
+    roomCode
+      .trim()
+      .toUpperCase();
+
+  roomRegistry.delete(
+    code
+  );
+
+  console.log(
+    `[Registry] Removed ${code}`
   );
 }
