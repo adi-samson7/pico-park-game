@@ -1,6 +1,18 @@
 import Phaser from "phaser";
 import { Room } from "@colyseus/sdk";
 
+import { audio } from "../audio/AudioManager";
+
+import {
+  addMuteButton,
+  burst,
+  confettiBurst,
+  confettiRain,
+  ensureParticleTexture,
+  ensurePlayerTexture,
+  floatText
+} from "../effects";
+
 // ==========================================
 // TYPES
 // ==========================================
@@ -44,6 +56,43 @@ interface CrystalData {
   y: number;
 
   collected: boolean;
+}
+
+// Per-player animation state. The server
+// is authoritative: the sprite eases
+// towards (tx, ty) and effects are driven
+// by changes in the state it sends.
+interface PlayerFx {
+
+  // Target feet position.
+  tx: number;
+  ty: number;
+
+  // Squash & stretch multipliers.
+  sqX: number;
+  sqY: number;
+
+  facing: 1 | -1;
+
+  vx: number;
+
+  grounded: boolean;
+
+  jumpCount: number;
+
+  // Last downward speed seen in the air.
+  airVy: number;
+
+  // Walk-cycle phase and dust timer.
+  phase: number;
+  dust: number;
+
+  // Desync idle breathing between players.
+  seed: number;
+
+  color: number;
+
+  isLocal: boolean;
 }
 
 // Sent once per level (and on request).
@@ -131,6 +180,14 @@ export class GameScene extends Phaser.Scene {
   private playerData:
     Map<string, PlayerData> =
     new Map();
+
+  private playerFx:
+    Map<string, PlayerFx> =
+    new Map();
+
+  // Level number currently shown (for the
+  // transition between levels).
+  private shownLevel = 0;
 
   // ========================================
   // INPUT
@@ -289,6 +346,8 @@ export class GameScene extends Phaser.Scene {
     this.doorOpen = false;
     this.groundObjects = [];
     this.hazardObjects = [];
+    this.playerFx = new Map();
+    this.shownLevel = 0;
 
     if (
       data.room
@@ -346,6 +405,10 @@ export class GameScene extends Phaser.Scene {
       "#202020"
     );
 
+    ensureParticleTexture(
+      this
+    );
+
     this.createInput();
 
     this.createUI();
@@ -355,6 +418,20 @@ export class GameScene extends Phaser.Scene {
     this.createInitialPlayers();
 
     this.setupNetwork();
+
+    addMuteButton(
+      this,
+      20,
+      76
+    );
+
+    audio.playMusic(
+      "game"
+    );
+
+    this.cameras.main.fadeIn(
+      350
+    );
 
     this.events.once(
       Phaser.Scenes.Events.SHUTDOWN,
@@ -517,7 +594,7 @@ export class GameScene extends Phaser.Scene {
       this.add.text(
         400,
         572,
-        "A / D or ← / → move   |   SPACE jump (press again in the air to double jump)   |   stand on each other!   |   avoid spikes and pits",
+        "A/D or ←/→ move  |  SPACE jump (twice = double jump)  |  stack up  |  avoid spikes & pits",
         {
           fontSize:
             "13px",
@@ -810,6 +887,12 @@ export class GameScene extends Phaser.Scene {
         this.localPlayer
       );
 
+      this.registerFx(
+        player,
+        this.localPlayer,
+        true
+      );
+
       console.log(
         "LOCAL PLAYER:",
         player.playerIndex + 1
@@ -843,6 +926,12 @@ export class GameScene extends Phaser.Scene {
       sprite
     );
 
+    this.registerFx(
+      player,
+      sprite,
+      false
+    );
+
     this.remotePlayers.set(
       player.id,
       sprite
@@ -865,6 +954,13 @@ export class GameScene extends Phaser.Scene {
 
     sprite.setCollideWorldBounds(
       false
+    );
+
+    // Anchor at the feet so squash and
+    // stretch keep the player planted.
+    sprite.setOrigin(
+      0.5,
+      1
     );
 
     const body =
@@ -898,42 +994,432 @@ export class GameScene extends Phaser.Scene {
     color: number
   ): string {
 
-    const key =
-      `player_${color}`;
+    return ensurePlayerTexture(
+      this,
+      color
+    );
+  }
 
-    if (
-      this.textures.exists(
-        key
-      )
-    ) {
+  // ========================================
+  // PLAYER FX
+  // ========================================
 
-      return key;
+  private registerFx(
+    player: PlayerData,
+    sprite:
+      Phaser.Physics.Arcade.Sprite,
+    isLocal: boolean
+  ) {
+
+    const fx: PlayerFx = {
+
+      tx:
+        player.x,
+
+      ty:
+        player.y + 30,
+
+      sqX:
+        0.2,
+
+      sqY:
+        0.2,
+
+      facing:
+        1,
+
+      vx:
+        0,
+
+      grounded:
+        false,
+
+      jumpCount:
+        0,
+
+      airVy:
+        0,
+
+      phase:
+        0,
+
+      dust:
+        0,
+
+      seed:
+        Math.random() * 6.28,
+
+      color:
+        player.color,
+
+      isLocal
+    };
+
+    this.playerFx.set(
+      player.id,
+      fx
+    );
+
+    sprite.setPosition(
+      fx.tx,
+      fx.ty
+    );
+
+    // Pop in.
+
+    this.tweens.add({
+
+      targets:
+        fx,
+
+      sqX:
+        1,
+
+      sqY:
+        1,
+
+      duration:
+        320,
+
+      ease:
+        "Back.easeOut"
+    });
+  }
+
+  private squash(
+    fx: PlayerFx,
+    x: number,
+    y: number,
+    duration: number
+  ) {
+
+    this.tweens.killTweensOf(
+      fx
+    );
+
+    fx.sqX =
+      x;
+
+    fx.sqY =
+      y;
+
+    this.tweens.add({
+
+      targets:
+        fx,
+
+      sqX:
+        1,
+
+      sqY:
+        1,
+
+      duration,
+
+      ease:
+        "Quad.easeOut"
+    });
+  }
+
+  // Reacts to a new state from the server:
+  // steers the sprite and fires jump /
+  // landing effects.
+
+  private applyPlayerState(
+    player: PlayerData,
+    sprite:
+      Phaser.Physics.Arcade.Sprite
+  ) {
+
+    const fx =
+      this.playerFx.get(
+        player.id
+      );
+
+    if (!fx) {
+
+      sprite.setPosition(
+        player.x,
+        player.y + 30
+      );
+
+      return;
     }
 
-    const graphics =
-      this.add.graphics();
+    fx.tx =
+      player.x;
 
-    graphics.fillStyle(
-      color,
-      1
-    );
+    fx.ty =
+      player.y + 30;
 
-    graphics.fillRect(
-      0,
-      0,
-      40,
-      60
-    );
+    fx.vx =
+      player.velocityX ?? 0;
 
-    graphics.generateTexture(
-      key,
-      40,
-      60
-    );
+    if (fx.vx > 5) {
+      fx.facing = 1;
+    } else if (fx.vx < -5) {
+      fx.facing = -1;
+    }
 
-    graphics.destroy();
+    const volume =
+      fx.isLocal ? 1 : 0.35;
 
-    return key;
+    const jumpCount =
+      player.jumpCount ?? 0;
+
+    const grounded =
+      player.grounded ?? false;
+
+    // ---- jumped ----
+
+    if (
+      jumpCount > fx.jumpCount &&
+      jumpCount > 0
+    ) {
+
+      audio.sfx(
+        jumpCount >= 2
+          ? "doubleJump"
+          : "jump",
+        { volume }
+      );
+
+      this.squash(
+        fx,
+        0.72,
+        1.32,
+        200
+      );
+
+      burst(
+        this,
+        fx.tx,
+        fx.ty,
+        {
+          count:
+            jumpCount >= 2 ? 9 : 6,
+
+          color:
+            jumpCount >= 2
+              ? 0xffffff
+              : 0xbbbbbb,
+
+          speedMin: 30,
+          speedMax: 110,
+          angleMin: 200,
+          angleMax: 340,
+          gravityY: -20,
+          lifespan: 320,
+          scaleStart: 0.9
+        }
+      );
+    }
+
+    // ---- landed ----
+
+    if (
+      grounded &&
+      !fx.grounded
+    ) {
+
+      const impact =
+        Math.min(
+          1,
+          Math.max(
+            0,
+            (fx.airVy - 120) / 600
+          )
+        );
+
+      audio.sfx(
+        "land",
+        {
+          volume:
+            volume *
+            (0.35 + impact * 0.65)
+        }
+      );
+
+      this.squash(
+        fx,
+        1 + 0.12 + impact * 0.3,
+        1 - 0.1 - impact * 0.28,
+        170
+      );
+
+      burst(
+        this,
+        fx.tx,
+        fx.ty,
+        {
+          count:
+            4 + Math.round(impact * 8),
+
+          color: 0xbbbbbb,
+          speedMin: 30,
+          speedMax: 90 + impact * 80,
+          angleMin: 190,
+          angleMax: 350,
+          gravityY: 40,
+          lifespan: 360,
+          scaleStart: 0.9
+        }
+      );
+    }
+
+    if (!grounded) {
+
+      fx.airVy =
+        Math.max(
+          fx.airVy,
+          player.velocityY ?? 0
+        );
+
+    } else {
+
+      fx.airVy = 0;
+    }
+
+    fx.jumpCount =
+      jumpCount;
+
+    fx.grounded =
+      grounded;
+  }
+
+  // Runs every frame: eases the sprites to
+  // the server position and animates them.
+
+  private animatePlayers(
+    delta: number
+  ) {
+
+    const dt =
+      Math.min(
+        delta / 1000,
+        0.1
+      );
+
+    // Frame-rate independent easing.
+    const k =
+      1 - Math.exp(-dt * 35);
+
+    const now =
+      this.time.now / 1000;
+
+    for (
+      const [id, fx]
+      of this.playerFx
+    ) {
+
+      const sprite =
+        id === this.room.sessionId
+          ? this.localPlayer
+          : this.remotePlayers.get(
+              id
+            );
+
+      if (!sprite) {
+        continue;
+      }
+
+      // ---- position ----
+
+      const dx =
+        fx.tx - sprite.x;
+
+      const dy =
+        fx.ty - sprite.y;
+
+      if (
+        Math.hypot(dx, dy) > 90
+      ) {
+
+        // Teleport (respawn).
+        sprite.setPosition(
+          fx.tx,
+          fx.ty
+        );
+
+      } else {
+
+        sprite.setPosition(
+          sprite.x + dx * k,
+          sprite.y + dy * k
+        );
+      }
+
+      sprite.setFlipX(
+        fx.facing < 0
+      );
+
+      // ---- walk bob / idle breathing ----
+
+      let bob = 0;
+
+      let tilt = 0;
+
+      const walking =
+        fx.grounded &&
+        Math.abs(fx.vx) > 10;
+
+      if (walking) {
+
+        fx.phase +=
+          dt * 16;
+
+        bob =
+          Math.abs(
+            Math.sin(fx.phase)
+          ) * 0.07;
+
+        tilt =
+          Math.sin(fx.phase) * 4;
+
+        fx.dust -= dt;
+
+        if (fx.dust <= 0) {
+
+          fx.dust = 0.17;
+
+          burst(
+            this,
+            sprite.x -
+              fx.facing * 8,
+            sprite.y,
+            {
+              count: 2,
+              color: 0xaaaaaa,
+              speedMin: 10,
+              speedMax: 40,
+              angleMin: 190,
+              angleMax: 350,
+              gravityY: -10,
+              lifespan: 260,
+              scaleStart: 0.7
+            }
+          );
+        }
+
+      } else {
+
+        fx.phase = 0;
+
+        bob =
+          Math.sin(
+            now * 3 + fx.seed
+          ) * 0.015 + 0.015;
+      }
+
+      sprite.setScale(
+        fx.sqX * (1 - bob * 0.6),
+        fx.sqY * (1 + bob)
+      );
+
+      sprite.setAngle(
+        tilt
+      );
+    }
   }
 
   // ========================================
@@ -971,6 +1457,11 @@ export class GameScene extends Phaser.Scene {
         }
       ) => {
 
+        this.crystalEffects(
+          data.id,
+          data.score
+        );
+
         this.removeCrystal(
           data.id
         );
@@ -996,6 +1487,36 @@ export class GameScene extends Phaser.Scene {
         this.setDoorOpen(
           true
         );
+
+        audio.sfx(
+          "doorOpen"
+        );
+
+        this.cameras.main.flash(
+          260,
+          120,
+          255,
+          160
+        );
+
+        if (this.doorRect) {
+
+          burst(
+            this,
+            this.doorRect.x,
+            this.doorRect.y,
+            {
+              count: 36,
+              color: [0x66ff88, 0xffffff, 0xffdd66],
+              speedMin: 80,
+              speedMax: 260,
+              gravityY: 200,
+              lifespan: 800,
+              scaleStart: 1.3,
+              depth: 35
+            }
+          );
+        }
 
         this.showTemporaryMessage(
           "EXIT OPEN!\nEveryone get to the door",
@@ -1032,6 +1553,23 @@ export class GameScene extends Phaser.Scene {
           nextLevel: number;
         }
       ) => {
+
+        audio.sfx(
+          "levelComplete"
+        );
+
+        confettiBurst(
+          this,
+          400,
+          470
+        );
+
+        this.cameras.main.flash(
+          200,
+          255,
+          255,
+          255
+        );
 
         this.showTemporaryMessage(
           `LEVEL ${
@@ -1074,7 +1612,18 @@ export class GameScene extends Phaser.Scene {
         this.gameFinished =
           true;
 
-        this.messageText.setText(
+        audio.stopMusic();
+
+        audio.sfx(
+          "win"
+        );
+
+        confettiRain(
+          this,
+          7000
+        );
+
+        this.showPersistentMessage(
           "YOU WIN!\n\nALL LEVELS COMPLETE\n\nPress ENTER to return to the menu"
         );
 
@@ -1097,6 +1646,10 @@ export class GameScene extends Phaser.Scene {
       (
         player: PlayerData
       ) => {
+
+        audio.sfx(
+          "join"
+        );
 
         this.playerData.set(
           player.id,
@@ -1121,6 +1674,10 @@ export class GameScene extends Phaser.Scene {
         }
       ) => {
 
+        audio.sfx(
+          "leave"
+        );
+
         const sprite =
           this.remotePlayers.get(
             data.id
@@ -1130,8 +1687,32 @@ export class GameScene extends Phaser.Scene {
           sprite
         ) {
 
+          const fx =
+            this.playerFx.get(
+              data.id
+            );
+
+          burst(
+            this,
+            sprite.x,
+            sprite.y - 30,
+            {
+              count: 18,
+              color: fx?.color ?? 0xffffff,
+              speedMin: 40,
+              speedMax: 200,
+              gravityY: 100,
+              lifespan: 600,
+              depth: 35
+            }
+          );
+
           sprite.destroy();
         }
+
+        this.playerFx.delete(
+          data.id
+        );
 
         this.remotePlayers.delete(
           data.id
@@ -1247,9 +1828,9 @@ export class GameScene extends Phaser.Scene {
           this.localPlayer
         ) {
 
-          this.localPlayer.setPosition(
-            player.x,
-            player.y
+          this.applyPlayerState(
+            player,
+            this.localPlayer
           );
         }
 
@@ -1281,9 +1862,9 @@ export class GameScene extends Phaser.Scene {
         sprite
       ) {
 
-        sprite.setPosition(
-          player.x,
-          player.y
+        this.applyPlayerState(
+          player,
+          sprite
         );
 
         sprite.setVisible(
@@ -1316,6 +1897,13 @@ export class GameScene extends Phaser.Scene {
   private buildDoor(
     exit: LevelData["exit"]
   ) {
+
+    if (this.doorRect) {
+
+      this.tweens.killTweensOf(
+        this.doorRect
+      );
+    }
 
     this.doorRect?.destroy();
 
@@ -1370,6 +1958,43 @@ export class GameScene extends Phaser.Scene {
     this.doorOpen =
       open;
 
+    // Open door glows.
+
+    if (this.doorRect) {
+
+      this.tweens.killTweensOf(
+        this.doorRect
+      );
+
+      this.doorRect.setAlpha(
+        1
+      );
+
+      if (open) {
+
+        this.tweens.add({
+
+          targets:
+            this.doorRect,
+
+          alpha:
+            0.65,
+
+          duration:
+            520,
+
+          yoyo:
+            true,
+
+          repeat:
+            -1,
+
+          ease:
+            "Sine.easeInOut"
+        });
+      }
+    }
+
     this.doorRect?.setFillStyle(
       open
         ? 0x226633
@@ -1409,6 +2034,26 @@ export class GameScene extends Phaser.Scene {
   private applyLevel(
     data: LevelData
   ) {
+
+    // Fade in when moving on to a new level.
+
+    if (
+      data.level !==
+      this.shownLevel
+    ) {
+
+      if (
+        this.shownLevel !== 0
+      ) {
+
+        this.cameras.main.fadeIn(
+          450
+        );
+      }
+
+      this.shownLevel =
+        data.level;
+    }
 
     this.targetScore =
       data.targetScore;
@@ -1570,6 +2215,10 @@ export class GameScene extends Phaser.Scene {
       of this.platformObjects
     ) {
 
+      this.tweens.killTweensOf(
+        platform
+      );
+
       platform.destroy();
     }
 
@@ -1593,6 +2242,27 @@ export class GameScene extends Phaser.Scene {
       object.setDepth(
         1
       );
+
+      // Platforms fade in one after another.
+
+      object.setAlpha(
+        0
+      );
+
+      this.tweens.add({
+
+        targets:
+          object,
+
+        alpha:
+          1,
+
+        duration:
+          300,
+
+        delay:
+          this.platformObjects.length * 70
+      });
 
       this.platformObjects.push(
         object
@@ -1650,11 +2320,143 @@ export class GameScene extends Phaser.Scene {
         5
       );
 
+      // Idle: bob up and down and pulse,
+      // each crystal out of phase.
+
+      this.tweens.add({
+
+        targets:
+          sprite,
+
+        y:
+          crystal.y - 4,
+
+        duration:
+          700 + Math.random() * 500,
+
+        yoyo:
+          true,
+
+        repeat:
+          -1,
+
+        ease:
+          "Sine.easeInOut",
+
+        delay:
+          Math.random() * 600
+      });
+
+      this.tweens.add({
+
+        targets:
+          sprite,
+
+        scale:
+          1.18,
+
+        duration:
+          520 + Math.random() * 300,
+
+        yoyo:
+          true,
+
+        repeat:
+          -1,
+
+        ease:
+          "Sine.easeInOut",
+
+        delay:
+          Math.random() * 600
+      });
+
       this.crystalSprites.set(
         crystal.id,
         sprite
       );
     }
+  }
+
+  // ========================================
+  // CRYSTAL EFFECTS
+  // ========================================
+
+  private crystalEffects(
+    id: number,
+    score: number
+  ) {
+
+    const crystal =
+      this.crystalSprites.get(
+        id
+      );
+
+    // Rising pitch as the shared score
+    // climbs.
+
+    audio.sfx(
+      "crystal",
+      {
+        pitch:
+          1 + (score % 8) * 0.07
+      }
+    );
+
+    if (crystal) {
+
+      burst(
+        this,
+        crystal.x,
+        crystal.y,
+        {
+          count: 14,
+          color: [0x66ddff, 0xffffff],
+          speedMin: 50,
+          speedMax: 190,
+          gravityY: 120,
+          lifespan: 520,
+          scaleStart: 1.1,
+          depth: 35
+        }
+      );
+
+      floatText(
+        this,
+        crystal.x,
+        crystal.y - 14,
+        "+1",
+        "#66ddff"
+      );
+    }
+
+    // Punch the counter.
+
+    this.tweens.killTweensOf(
+      this.scoreText
+    );
+
+    this.scoreText.setScale(
+      1.25
+    );
+
+    this.tweens.add({
+
+      targets:
+        this.scoreText,
+
+      scaleX:
+        1,
+
+      scaleY:
+        1,
+
+      duration:
+        220,
+
+      ease:
+        "Back.easeOut"
+    });
   }
 
   // ========================================
@@ -1673,6 +2475,12 @@ export class GameScene extends Phaser.Scene {
     if (!crystal) {
       return;
     }
+
+    // Stop the idle bob before collecting.
+
+    this.tweens.killTweensOf(
+      crystal
+    );
 
     this.tweens.add({
 
@@ -1713,62 +2521,141 @@ export class GameScene extends Phaser.Scene {
     }
   ) {
 
-    if (
+    const isLocal =
       data.id ===
-      this.room.sessionId
-    ) {
-
-      if (
-        this.localPlayer
-      ) {
-
-        this.localPlayer.setPosition(
-          data.x,
-          data.y
-        );
-      }
-
-      this.showTemporaryMessage(
-        data.cause === "spikes"
-          ? "OUCH! SPIKES!"
-          : data.cause === "fell"
-            ? "YOU FELL!"
-            : "RESPAWN!",
-        800
-      );
-
-      this.cameras.main.shake(
-        140,
-        0.006
-      );
-
-      return;
-    }
+      this.room.sessionId;
 
     const sprite =
-      this.remotePlayers.get(
+      isLocal
+        ? this.localPlayer
+        : this.remotePlayers.get(
+            data.id
+          );
+
+    const fx =
+      this.playerFx.get(
         data.id
       );
 
-    if (
-      sprite
-    ) {
+    const volume =
+      isLocal ? 1 : 0.4;
+
+    // ---- death burst where they were ----
+
+    if (sprite && fx) {
+
+      burst(
+        this,
+        sprite.x,
+        sprite.y - 30,
+        {
+          count: 26,
+          color: [fx.color, 0xffffff],
+          speedMin: 80,
+          speedMax: 320,
+          gravityY: 600,
+          lifespan: 700,
+          scaleStart: 1.4,
+          depth: 35
+        }
+      );
+
+      // ---- reappear at the spawn point ----
+
+      fx.tx = data.x;
+      fx.ty = data.y + 30;
+      fx.grounded = false;
+      fx.jumpCount = 0;
+      fx.airVy = 0;
 
       sprite.setPosition(
-        data.x,
-        data.y
+        fx.tx,
+        fx.ty
       );
+
+      this.tweens.killTweensOf(
+        fx
+      );
+
+      fx.sqX = 0.2;
+      fx.sqY = 0.2;
+
+      this.tweens.add({
+
+        targets:
+          fx,
+
+        sqX:
+          1,
+
+        sqY:
+          1,
+
+        duration:
+          350,
+
+        ease:
+          "Back.easeOut"
+      });
     }
+
+    audio.sfx(
+      data.cause === "spikes"
+        ? "spikes"
+        : "fall",
+      { volume }
+    );
+
+    this.time.delayedCall(
+      350,
+      () =>
+        audio.sfx(
+          "respawn",
+          { volume: volume * 0.7 }
+        )
+    );
+
+    if (!isLocal) {
+      return;
+    }
+
+    this.showTemporaryMessage(
+      data.cause === "spikes"
+        ? "OUCH! SPIKES!"
+        : data.cause === "fell"
+          ? "YOU FELL!"
+          : "RESPAWN!",
+      800
+    );
+
+    this.cameras.main.shake(
+      140,
+      0.006
+    );
+
+    this.cameras.main.flash(
+      140,
+      255,
+      60,
+      60
+    );
   }
 
   // ========================================
   // MESSAGE
   // ========================================
 
-  private showTemporaryMessage(
-    message: string,
-    duration: number
+  // Stays on screen. Cancels any fade-out
+  // still running from an earlier message,
+  // which would otherwise clear this one.
+
+  private showPersistentMessage(
+    message: string
   ) {
+
+    this.tweens.killTweensOf(
+      this.messageText
+    );
 
     this.messageText.setText(
       message
@@ -1777,6 +2664,71 @@ export class GameScene extends Phaser.Scene {
     this.messageText.setAlpha(
       1
     );
+
+    this.messageText.setScale(
+      0.6
+    );
+
+    this.tweens.add({
+
+      targets:
+        this.messageText,
+
+      scaleX:
+        1,
+
+      scaleY:
+        1,
+
+      duration:
+        320,
+
+      ease:
+        "Back.easeOut"
+    });
+  }
+
+  private showTemporaryMessage(
+    message: string,
+    duration: number
+  ) {
+
+    // A newer message replaces an older one
+    // (and its fade-out).
+
+    this.tweens.killTweensOf(
+      this.messageText
+    );
+
+    this.messageText.setText(
+      message
+    );
+
+    this.messageText.setAlpha(
+      1
+    );
+
+    this.messageText.setScale(
+      0.6
+    );
+
+    this.tweens.add({
+
+      targets:
+        this.messageText,
+
+      scaleX:
+        1,
+
+      scaleY:
+        1,
+
+      duration:
+        220,
+
+      ease:
+        "Back.easeOut"
+    });
 
     this.tweens.add({
 
@@ -1806,7 +2758,17 @@ export class GameScene extends Phaser.Scene {
   // UPDATE
   // ========================================
 
-  update() {
+  update(
+    _time: number,
+    delta: number
+  ) {
+
+    if (this.room) {
+
+      this.animatePlayers(
+        delta
+      );
+    }
 
     if (
       !this.room ||
@@ -1844,7 +2806,7 @@ export class GameScene extends Phaser.Scene {
 
     this.youMarker.setPosition(
       this.localPlayer.x,
-      this.localPlayer.y - 36
+      this.localPlayer.y - 68
     );
 
     this.youMarker.setVisible(
@@ -1888,6 +2850,21 @@ export class GameScene extends Phaser.Scene {
     console.log(
       "GameScene shutting down."
     );
+
+    // Stop listening: the server may still
+    // send messages while we leave, and the
+    // handlers use scene objects that are
+    // about to be destroyed.
+
+    if (this.room) {
+
+      this.room.removeAllListeners();
+
+      this.room.onMessage(
+        "*",
+        () => {}
+      );
+    }
 
     for (
       const sprite
@@ -1955,5 +2932,7 @@ export class GameScene extends Phaser.Scene {
 
     this.hazardObjects =
       [];
+
+    this.playerFx.clear();
   }
 }

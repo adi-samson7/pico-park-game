@@ -1,6 +1,11 @@
 import Phaser from "phaser";
 import { Room } from "@colyseus/sdk";
 import { NetworkManager } from "../network/NetworkManager";
+import { audio } from "../audio/AudioManager";
+import {
+  addMuteButton,
+  juiceButton
+} from "../effects";
 
 interface PlayerData {
   id: string;
@@ -19,6 +24,9 @@ export class LobbyScene extends Phaser.Scene {
   private room!: Room;
 
   private roomCode = "";
+
+  // Throttle for the join sound.
+  private lastJoinSound = 0;
 
   // Session id of the host (set by the server).
   private hostId = "";
@@ -69,6 +77,16 @@ export class LobbyScene extends Phaser.Scene {
 
     this.cameras.main.setBackgroundColor(
       "#202020"
+    );
+
+    addMuteButton(
+      this,
+      20,
+      575
+    );
+
+    audio.playMusic(
+      "menu"
     );
 
     // ----------------------------------------
@@ -303,6 +321,22 @@ export class LobbyScene extends Phaser.Scene {
           player
         );
 
+        const now =
+          Date.now();
+
+        if (
+          now - this.lastJoinSound >
+          400
+        ) {
+
+          this.lastJoinSound =
+            now;
+
+          audio.sfx(
+            "join"
+          );
+        }
+
         this.players.set(
           player.id,
           player
@@ -338,6 +372,25 @@ export class LobbyScene extends Phaser.Scene {
           return;
         }
 
+        if (
+          player.ready !==
+          data.ready
+        ) {
+
+          audio.sfx(
+            data.ready
+              ? "ready"
+              : "unready",
+            {
+              volume:
+                data.id ===
+                this.room.sessionId
+                  ? 1
+                  : 0.45
+            }
+          );
+        }
+
         player.ready =
           data.ready;
 
@@ -364,6 +417,10 @@ export class LobbyScene extends Phaser.Scene {
         console.log(
           "Player left:",
           data.id
+        );
+
+        audio.sfx(
+          "leave"
         );
 
         this.players.delete(
@@ -404,6 +461,10 @@ export class LobbyScene extends Phaser.Scene {
 
         console.log(
           "Game started!"
+        );
+
+        audio.sfx(
+          "start"
         );
 
         const players =
@@ -765,6 +826,11 @@ export class LobbyScene extends Phaser.Scene {
         useHandCursor: true
       });
 
+    juiceButton(
+      this,
+      this.readyButton
+    );
+
     this.readyButton.on(
       "pointerover",
       () => {
@@ -838,6 +904,11 @@ export class LobbyScene extends Phaser.Scene {
         .setInteractive({
           useHandCursor: true
         });
+
+      juiceButton(
+        this,
+        this.startButton
+      );
 
       this.startButton.on(
         "pointerover",
@@ -941,6 +1012,11 @@ export class LobbyScene extends Phaser.Scene {
         useHandCursor: true
       });
 
+    juiceButton(
+      this,
+      leaveButton
+    );
+
     leaveButton.on(
       "pointerover",
       () => {
@@ -1016,6 +1092,11 @@ export class LobbyScene extends Phaser.Scene {
       .setInteractive({
         useHandCursor: true
       });
+
+    juiceButton(
+      this,
+      backButton
+    );
 
     backButton.on(
       "pointerdown",

@@ -1,5 +1,28 @@
 import Phaser from "phaser";
 
+import { audio } from "../audio/AudioManager";
+
+import {
+  addMuteButton,
+  ensurePlayerTexture,
+  juiceButton
+} from "../effects";
+
+// Two mascots each side, clear of the buttons.
+const MASCOT_X = [
+  120,
+  200,
+  600,
+  680
+];
+
+const PLAYER_COLORS = [
+  0xff4444,
+  0x4488ff,
+  0x44cc66,
+  0xffcc33
+];
+
 export class MenuScene extends Phaser.Scene {
 
   constructor() {
@@ -16,20 +39,74 @@ export class MenuScene extends Phaser.Scene {
       "#202020"
     );
 
+    this.createBackdrop();
+
+    this.createMascots();
+
+    addMuteButton(
+      this,
+      20,
+      575
+    );
+
+    audio.playMusic(
+      "menu"
+    );
+
     // ----------------------------------------
     // TITLE
     // ----------------------------------------
 
-    this.add.text(
-      400,
-      150,
-      "PICO CO-OP",
-      {
-        fontSize: "48px",
-        color: "#ffffff",
-        fontStyle: "bold"
+    const title =
+      this.add.text(
+        400,
+        150,
+        "PICO CO-OP",
+        {
+          fontSize: "48px",
+          color: "#ffffff",
+          fontStyle: "bold"
+        }
+      ).setOrigin(0.5);
+
+    // Title drops in, then bobs gently.
+
+    title.setAlpha(0);
+
+    title.y = 100;
+
+    this.tweens.add({
+
+      targets: title,
+
+      y: 150,
+
+      alpha: 1,
+
+      duration: 600,
+
+      ease: "Bounce.easeOut",
+
+      onComplete: () => {
+
+        this.tweens.add({
+
+          targets: title,
+
+          y: 144,
+
+          scale: 1.03,
+
+          duration: 1400,
+
+          yoyo: true,
+
+          repeat: -1,
+
+          ease: "Sine.easeInOut"
+        });
       }
-    ).setOrigin(0.5);
+    });
 
     // ----------------------------------------
     // CREATE ROOM BUTTON
@@ -56,6 +133,24 @@ export class MenuScene extends Phaser.Scene {
       .setInteractive({
         useHandCursor: true
       });
+
+    juiceButton(
+      this,
+      createButton
+    );
+
+    createButton.setAlpha(0);
+
+    this.tweens.add({
+
+      targets: createButton,
+
+      alpha: 1,
+
+      duration: 400,
+
+      delay: 250
+    });
 
     createButton.on(
       "pointerover",
@@ -118,6 +213,24 @@ export class MenuScene extends Phaser.Scene {
         useHandCursor: true
       });
 
+    juiceButton(
+      this,
+      joinButton
+    );
+
+    joinButton.setAlpha(0);
+
+    this.tweens.add({
+
+      targets: joinButton,
+
+      alpha: 1,
+
+      duration: 400,
+
+      delay: 400
+    });
+
     joinButton.on(
       "pointerover",
       () => {
@@ -150,6 +263,167 @@ export class MenuScene extends Phaser.Scene {
             mode: "join"
           }
         );
+      }
+    );
+  }
+
+  // ========================================
+  // BACKDROP
+  // ========================================
+
+  // Translucent blocks drifting upwards.
+
+  private createBackdrop() {
+
+    for (let i = 0; i < 16; i++) {
+
+      const size =
+        10 + Math.random() * 18;
+
+      const block =
+        this.add.rectangle(
+          Math.random() * 800,
+          Math.random() * 640,
+          size,
+          size,
+          PLAYER_COLORS[i % 4],
+          0.16
+        );
+
+      block.setDepth(-5);
+
+      this.tweens.add({
+
+        targets: block,
+
+        y: -40,
+
+        duration:
+          9000 + Math.random() * 9000,
+
+        repeat: -1,
+
+        onRepeat: () => {
+
+          block.x =
+            Math.random() * 800;
+
+          block.y = 640;
+        }
+      });
+
+      this.tweens.add({
+
+        targets: block,
+
+        angle: 360,
+
+        duration:
+          6000 + Math.random() * 6000,
+
+        repeat: -1
+      });
+    }
+  }
+
+  // ========================================
+  // MASCOTS
+  // ========================================
+
+  // The four players, hopping on the spot.
+
+  private createMascots() {
+
+    this.add.rectangle(
+      400,
+      510,
+      800,
+      80,
+      0x2a2a2a
+    );
+
+    PLAYER_COLORS.forEach(
+      (color, i) => {
+
+        const baseY = 480;
+
+        const mascot =
+          this.add.image(
+            MASCOT_X[i],
+            baseY,
+            ensurePlayerTexture(
+              this,
+              color
+            )
+          ).setOrigin(
+            0.5,
+            1
+          );
+
+        const hop = () => {
+
+          // Crouch, leap, land.
+
+          this.tweens.add({
+
+            targets: mascot,
+
+            scaleX: 1.15,
+
+            scaleY: 0.8,
+
+            duration: 90,
+
+            yoyo: true,
+
+            onComplete: () => {
+
+              this.tweens.add({
+
+                targets: mascot,
+
+                y: baseY - 55,
+
+                scaleX: 0.85,
+
+                scaleY: 1.2,
+
+                duration: 260,
+
+                ease: "Sine.easeOut",
+
+                yoyo: true,
+
+                onComplete: () => {
+
+                  this.tweens.add({
+
+                    targets: mascot,
+
+                    scaleX: 1.2,
+
+                    scaleY: 0.8,
+
+                    duration: 80,
+
+                    yoyo: true
+                  });
+                }
+              });
+            }
+          });
+        };
+
+        this.time.addEvent({
+
+          delay: 2000,
+
+          startAt: -i * 450,
+
+          loop: true,
+
+          callback: hop
+        });
       }
     );
   }
