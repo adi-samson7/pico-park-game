@@ -55,7 +55,12 @@ npm run typecheck
 | `server/test/registry.test.ts` | room code registry |
 | `server/test/app.test.ts` | `/health`, room lookup, CORS, static client serving, cache headers |
 | `server/test/rooms.test.ts` | lobby rules, host migration, room locking, input validation, hazards, crystals → door → next level → win |
+| `server/test/reconnect.test.ts` | dropped connections: the seat is held, the player comes back with a full resync, host hand-over, the exit never waits for an absent player, input sequence numbers, latency reports |
+| `server/test/netcode.test.ts` | interpolation, prediction and reconciliation run against the real server physics over simulated latency and jitter (10 ms to 400 ms, 30 to 144 fps, stacking on a player's head), ping bands, session storage |
+| `server/test/physics-sync.test.ts` | the client's copy of the physics is identical to the server's |
 | `server/test/e2e/game.e2e.ts` | the real UI in Chrome: clicking through menu → lobby → game, sounds, animations, effects |
+| `server/test/e2e/net.e2e.ts` | Chrome playing through a lag proxy: ping chip, prediction vs. a 300 ms round trip, smooth remote players, outages, reload-and-resume, giving up, stale sessions |
+| `server/test/e2e/hosting.e2e.ts` | the client built for another origin (static host) talking to the game server: CORS, WebSocket, joining by code, resume |
 
 The e2e suite needs `npm run build` first and Chrome/Chromium (set `CHROME_PATH` if it is not found;
 `E2E_SCREENSHOTS=<dir>` saves a screenshot per stage). It skips, with a reason, when it cannot run.
@@ -72,6 +77,7 @@ Server environment variables:
 | `CLIENT_DIST` | `../../client/dist` | Directory of the built client to serve |
 | `CORS_ORIGIN` | `*` | `Access-Control-Allow-Origin` for the room lookup endpoint |
 | `LOG_LEVEL` | (info) | `silent` turns off the game log |
+| `RECONNECT_WINDOW_SECONDS` | `30` | How long a player whose connection dropped keeps their seat (see [Bad connections](#bad-connections)) |
 
 Client build-time variable:
 
@@ -107,17 +113,52 @@ Rooms and room codes live **in the server's memory**. Consequences:
 
 Going beyond that needs a shared room registry and Colyseus' Redis presence/driver (see the PRD's risk list).
 
+## Bad connections
+
+The server is authoritative, so a laggy or flaky connection must not make the game feel laggy or flaky.
+
+| Problem | What the game does |
+| --- | --- |
+| **Your own movement feels late** | *Client-side prediction*: the client runs the same physics code as the server (`client/src/shared/physics.ts` is a checked-in copy of `server/src/physics.ts`) on your player right away. Every input carries a sequence number and every server state says which one it has applied; if the prediction was wrong (bumped, respawned, a guess about another player) the client takes the server's state, replays the inputs the server has not seen yet and glides the picture to the corrected spot. |
+| **Other players stutter** | *Snapshot interpolation*: other players are drawn 50 ms in the past, between two positions that have already arrived, so late packets do not show. |
+| **The connection drops** (Wi-Fi blip, closed laptop, **page reload**) | The server keeps the player's seat for 30 s. The client library retries on its own, the screen shows "CONNECTION LOST", other players see the character greyed out, and the returning player gets a full *resync* (roster, level, crystals, door) and is put back at their spawn point. A reload resumes the game too: the tab remembers the room in `sessionStorage`. While someone is away the door does not wait for them and nobody can stand on them. If they do not return in time they are removed like a normal leave. |
+| **Who has a bad connection?** | A ping chip (bottom right) and a ping under every player's colour chip, green below 80 ms, yellow below 160 ms, red above. |
+
+Leaving on purpose (LEAVE, or ENTER after winning) is never held: it frees the seat immediately.
+
+Switches for comparing and testing (append to the URL):
+
+| URL | Effect |
+| --- | --- |
+| `?predict=0` | no prediction: the local player is drawn from the server only |
+| `?interp=0` / `?interp=150` | draw other players at their latest position / 150 ms in the past |
+| `?retries=3` | give up on a lost connection after 3 attempts instead of 10 |
+
+If you change `server/src/physics.ts`, run `npm run sync:physics`: a test and `npm run typecheck` fail while the client's copy is out of date.
+
+## Hosting the client on Vercel / Firebase Hosting / Netlify
+
+A static host can serve the built client (`client/dist`), but **not the game server**: Vercel and Firebase Functions are serverless and cannot keep a WebSocket open. Run the game server on something that can (Render with the included `render.yaml`, Fly.io, Railway, Google Cloud Run, a VPS) and point the client at it:
+
+1. Deploy the server (single instance, see below) and note its URL, e.g. `https://pico-server.onrender.com`.
+2. Build the client with `VITE_SERVER_URL=https://pico-server.onrender.com`. On Vercel set it as an Environment Variable (Root Directory `client`, build command `npm run build`, output `dist`); with Firebase, `VITE_SERVER_URL=... npm --prefix client run build` and deploy `client/dist` as the hosting `public` directory.
+3. The client uses `wss://` automatically for an `https://` server. The server accepts requests from other origins by default; set `CORS_ORIGIN=https://your-site.vercel.app` to restrict the room-code lookup.
+
+`server/test/e2e/hosting.e2e.ts` runs exactly this split (built client on one origin, game server on another) in a real browser.
+
 ## Project layout
 
 ```
 client/            Phaser game (Vite + TypeScript)
   src/scenes/      Menu, Lobby and Game scenes
   src/audio/       synthesised sound effects + music (no asset files)
+  src/net/         prediction, interpolation, ping, session resume, connection overlay
+  src/shared/      copy of the server's physics (see "Bad connections")
   src/effects.ts   particles, confetti, button juice
   src/config.ts    server address
 server/            Colyseus game server (Node + TypeScript)
   src/app.ts       HTTP + WebSocket server factory (lookup, /health, static client)
-  src/physics.ts   shared platformer physics (pure functions)
+  src/physics.ts   platformer physics (pure functions; the client keeps a copy)
   src/levels.ts    level data (platforms, crystals, exit, pits, spikes)
   src/rooms/       GameRoom: lobby, game loop, rules
   test/            unit, integration and browser tests

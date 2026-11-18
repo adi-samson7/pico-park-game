@@ -2,6 +2,8 @@ import Phaser from "phaser";
 import { Room } from "@colyseus/sdk";
 import { NetworkManager } from "../network/NetworkManager";
 import { audio } from "../audio/AudioManager";
+import { ConnectionHud } from "../net/ConnectionHud";
+import { tabSession } from "../net/session";
 import {
   addMuteButton,
   juiceButton
@@ -14,11 +16,41 @@ interface PlayerData {
   playerIndex: number;
   color: number;
   ready: boolean;
+
+  // False while the player's connection is
+  // down and the server holds their seat.
+  connected?: boolean;
+}
+
+// What the server sends to bring a client up
+// to date after its connection came back.
+interface ResyncData {
+  roomCode: string;
+  hostId: string;
+  gameStarted: boolean;
+  gameFinished: boolean;
+  players: PlayerData[];
 }
 
 export class LobbyScene extends Phaser.Scene {
 
-  private mode: "create" | "join" = "create";
+  // "resume": back in a room we were already
+  // in (after a page reload).
+  private mode:
+    "create" | "join" | "resume" = "create";
+
+  // Room and first picture handed over by the
+  // menu when resuming.
+  private resumeRoom: Room | null = null;
+
+  private resumeData: ResyncData | null = null;
+
+  // Ping chip and "connection lost" veil.
+  private hud: ConnectionHud | null = null;
+
+  // The room outlives this scene: every
+  // listener added here is removed again.
+  private unsubs: (() => void)[] = [];
 
   private network!: NetworkManager;
   private room!: Room;
@@ -63,10 +95,24 @@ export class LobbyScene extends Phaser.Scene {
 
   init(
     data: {
-      mode: "create" | "join";
+      mode: "create" | "join" | "resume";
+      room?: Room;
+      resync?: ResyncData;
     }
   ) {
     this.mode = data.mode;
+
+    this.resumeRoom = data.room ?? null;
+
+    this.resumeData = data.resync ?? null;
+
+    this.hud = null;
+
+    this.unsubs = [];
+
+    this.players = new Map();
+
+    this.playerTexts = new Map();
   }
 
   // ==========================================
@@ -77,6 +123,11 @@ export class LobbyScene extends Phaser.Scene {
 
     this.cameras.main.setBackgroundColor(
       "#202020"
+    );
+
+    this.events.once(
+      Phaser.Scenes.Events.SHUTDOWN,
+      () => this.teardown()
     );
 
     addMuteButton(
@@ -170,10 +221,30 @@ export class LobbyScene extends Phaser.Scene {
         new NetworkManager();
 
       // ======================================
+      // RESUME (after a page reload)
+      // ======================================
+
+      if (
+        this.mode === "resume" &&
+        this.resumeRoom
+      ) {
+
+        this.room =
+          this.resumeRoom;
+
+        this.network.room =
+          this.room;
+
+        this.statusText.setText(
+          "Back in your room!"
+        );
+      }
+
+      // ======================================
       // CREATE ROOM
       // ======================================
 
-      if (this.mode === "create") {
+      else if (this.mode === "create") {
 
         this.statusText.setText(
           "Creating room..."
@@ -234,6 +305,24 @@ export class LobbyScene extends Phaser.Scene {
 
       this.createLobbyButtons();
 
+      // The server tells everyone who is there
+      // when we join. When resuming we missed
+      // that, so ask again.
+
+      if (this.mode === "resume") {
+
+        if (this.resumeData) {
+
+          this.applyResync(
+            this.resumeData
+          );
+        }
+
+        this.room.send(
+          "requestResync"
+        );
+      }
+
     } catch (error) {
 
       console.error(
@@ -265,7 +354,7 @@ export class LobbyScene extends Phaser.Scene {
     // ROOM CODE
     // ----------------------------------------
 
-    this.room.onMessage(
+    this.listen(
       "roomCode",
       (data: {
         roomCode: string;
@@ -282,6 +371,11 @@ export class LobbyScene extends Phaser.Scene {
         this.roomCodeText.setText(
           `ROOM CODE: ${data.roomCode}`
         );
+
+        tabSession.remember(
+          this.room.reconnectionToken,
+          data.roomCode
+        );
       }
     );
 
@@ -289,7 +383,7 @@ export class LobbyScene extends Phaser.Scene {
     // MY PLAYER
     // ----------------------------------------
 
-    this.room.onMessage(
+    this.listen(
       "playerJoinedSelf",
       (player: PlayerData) => {
 
@@ -312,7 +406,7 @@ export class LobbyScene extends Phaser.Scene {
     // PLAYER JOINED
     // ----------------------------------------
 
-    this.room.onMessage(
+    this.listen(
       "playerJoined",
       (player: PlayerData) => {
 
@@ -351,7 +445,7 @@ export class LobbyScene extends Phaser.Scene {
     // READY CHANGED
     // ----------------------------------------
 
-    this.room.onMessage(
+    this.listen(
       "playerReadyChanged",
       (data: {
         id: string;
@@ -408,7 +502,7 @@ export class LobbyScene extends Phaser.Scene {
     // PLAYER LEFT
     // ----------------------------------------
 
-    this.room.onMessage(
+    this.listen(
       "playerLeft",
       (data: {
         id: string;
@@ -436,7 +530,7 @@ export class LobbyScene extends Phaser.Scene {
     // ALL PLAYERS READY
     // ----------------------------------------
 
-    this.room.onMessage(
+    this.listen(
       "allPlayersReady",
       (data: {
         allReady: boolean;
@@ -455,7 +549,7 @@ export class LobbyScene extends Phaser.Scene {
     // GAME STARTED
     // ----------------------------------------
 
-    this.room.onMessage(
+    this.listen(
       "gameStarted",
       () => {
 
@@ -467,46 +561,7 @@ export class LobbyScene extends Phaser.Scene {
           "start"
         );
 
-        const players =
-          Array.from(
-            this.players.values()
-          );
-
-        const myPlayer =
-          this.players.get(
-            this.room.sessionId
-          );
-
-        console.log(
-          "Sending players to GameScene:",
-          players
-        );
-
-        console.log(
-          "My player:",
-          myPlayer
-        );
-
-        this.clearLobbyUI();
-
-        this.registry.set(
-          "room",
-          this.room
-        );
-
-        this.scene.start(
-          "GameScene",
-          {
-            room:
-              this.room,
-
-            players:
-              players,
-
-            myPlayer:
-              myPlayer
-          }
-        );
+        this.startGameScene();
       }
     );
 
@@ -514,7 +569,7 @@ export class LobbyScene extends Phaser.Scene {
     // HOST CHANGED
     // ----------------------------------------
 
-    this.room.onMessage(
+    this.listen(
       "hostChanged",
       (data: {
         id: string;
@@ -532,7 +587,7 @@ export class LobbyScene extends Phaser.Scene {
     // START GAME FAILED
     // ----------------------------------------
 
-    this.room.onMessage(
+    this.listen(
       "startGameFailed",
       (data: {
         reason: string;
@@ -550,22 +605,228 @@ export class LobbyScene extends Phaser.Scene {
     );
 
     // ----------------------------------------
-    // DISCONNECTED FROM SERVER
+    // CONNECTION
     // ----------------------------------------
 
-    this.room.onLeave(
-      () => {
+    this.hud =
+      new ConnectionHud(
+        this,
+        this.room,
+        {
+          x: 790,
+          y: 592,
 
-        if (
-          this.scene.isActive(
-            "LobbyScene"
-          )
-        ) {
+          onLost: (code) =>
+            this.connectionLost(code),
 
-          this.scene.start(
-            "MenuScene"
-          );
+          onLatencies: () =>
+            this.updatePlayerList()
         }
+      );
+
+    this.listen(
+      "playerDropped",
+      (data: {
+        id: string;
+      }) => {
+
+        const player =
+          this.players.get(
+            data.id
+          );
+
+        if (player) {
+
+          player.connected =
+            false;
+
+          this.updatePlayerList();
+        }
+      }
+    );
+
+    this.listen(
+      "playerReconnected",
+      (data: {
+        id: string;
+      }) => {
+
+        const player =
+          this.players.get(
+            data.id
+          );
+
+        if (player) {
+
+          player.connected =
+            true;
+
+          this.updatePlayerList();
+        }
+      }
+    );
+
+    this.listen(
+      "resync",
+      (data: ResyncData) => {
+
+        this.applyResync(
+          data
+        );
+      }
+    );
+  }
+
+  // ==========================================
+  // LISTENERS
+  // ==========================================
+
+  private listen(
+    type: string,
+    callback: (data: any) => void
+  ) {
+
+    this.unsubs.push(
+      this.room.onMessage(
+        type,
+        callback
+      )
+    );
+  }
+
+  private teardown() {
+
+    for (const off of this.unsubs) {
+      off();
+    }
+
+    this.unsubs = [];
+
+    this.hud?.dispose();
+
+    this.hud = null;
+  }
+
+  // ==========================================
+  // CONNECTION LOST FOR GOOD
+  // ==========================================
+
+  private connectionLost(
+    code: number
+  ) {
+
+    if (
+      !this.scene.isActive(
+        "LobbyScene"
+      )
+    ) {
+      return;
+    }
+
+    // Nothing left to come back to.
+
+    tabSession.forget();
+
+    this.scene.start(
+      "MenuScene",
+      {
+        // 4000: we left on purpose.
+        notice:
+          code === 4000
+            ? undefined
+            : "Connection to the room was lost."
+      }
+    );
+  }
+
+  // ==========================================
+  // RESYNC
+  // ==========================================
+
+  private applyResync(
+    data: ResyncData
+  ) {
+
+    this.players.clear();
+
+    for (const player of data.players) {
+
+      this.players.set(
+        player.id,
+        player
+      );
+    }
+
+    this.hostId =
+      data.hostId;
+
+    this.roomCode =
+      data.roomCode;
+
+    this.roomCodeText.setText(
+      `ROOM CODE: ${data.roomCode}`
+    );
+
+    tabSession.remember(
+      this.room.reconnectionToken,
+      data.roomCode
+    );
+
+    // The game started while we were away.
+
+    if (data.gameStarted) {
+
+      this.startGameScene();
+
+      return;
+    }
+
+    this.updatePlayerList();
+    this.updateStartButton();
+  }
+
+  // ==========================================
+  // START GAME SCENE
+  // ==========================================
+
+  private startGameScene() {
+
+    if (
+      !this.scene.isActive(
+        "LobbyScene"
+      )
+    ) {
+      return;
+    }
+
+    const players =
+      Array.from(
+        this.players.values()
+      );
+
+    const myPlayer =
+      this.players.get(
+        this.room.sessionId
+      );
+
+    this.clearLobbyUI();
+
+    this.registry.set(
+      "room",
+      this.room
+    );
+
+    this.scene.start(
+      "GameScene",
+      {
+        room:
+          this.room,
+
+        players:
+          players,
+
+        myPlayer:
+          myPlayer
       }
     );
   }
@@ -611,15 +872,29 @@ export class LobbyScene extends Phaser.Scene {
       of sortedPlayers
     ) {
 
+      const away =
+        player.connected === false;
+
       const status =
-        player.ready
-          ? "READY"
-          : "NOT READY";
+        away
+          ? "RECONNECTING..."
+          : player.ready
+            ? "READY"
+            : "NOT READY";
 
       const textColor =
-        player.ready
-          ? "#66ff66"
-          : "#aaaaaa";
+        away
+          ? "#ffcc66"
+          : player.ready
+            ? "#66ff66"
+            : "#aaaaaa";
+
+      const rtt =
+        away
+          ? null
+          : this.hud?.rttOf(
+              player.id
+            ) ?? null;
 
       const isHost =
         player.id === this.hostId;
@@ -648,7 +923,11 @@ export class LobbyScene extends Phaser.Scene {
           400,
           275 +
             player.playerIndex * 50,
-          `${playerName}    ${status}`,
+          `${playerName}    ${status}${
+            rtt === null
+              ? ""
+              : `    ${rtt} ms`
+          }`,
           {
             fontSize: "21px",
             color: textColor,

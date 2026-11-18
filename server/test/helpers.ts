@@ -71,6 +71,9 @@ export interface PlayerState {
   alive: boolean;
   jumpCount: number;
   grounded: boolean;
+  standingOn?: string | null;
+  connected?: boolean;
+  ack?: number;
 }
 
 export interface GameState {
@@ -83,6 +86,7 @@ export interface GameState {
   gameFinished: boolean;
   doorOpen: boolean;
   playersAtExit: number;
+  playersNeeded?: number;
 }
 
 export interface LevelPayload {
@@ -115,7 +119,11 @@ const MESSAGES = [
   "levelCompleted",
   "gameFinished",
   "playerRespawned",
-  "startGameFailed"
+  "startGameFailed",
+  "playerDropped",
+  "playerReconnected",
+  "resync",
+  "latencies"
 ] as const;
 
 /** A scripted player that records what the
@@ -137,11 +145,29 @@ export class Bot {
 
   private timer: NodeJS.Timeout | null = null;
 
+  // Connection life cycle as the client
+  // library reports it.
+  drops = 0;
+
+  reconnects = 0;
+
+  // Set when the library gave up (or we left).
+  leftWith: number | null = null;
+
   constructor(readonly room: ClientRoom) {
 
     // Swallow anything we don't list so the
     // SDK doesn't log warnings.
     room.onMessage("*", () => {});
+
+    room.onDrop(() => { this.drops++; });
+    room.onReconnect(() => { this.reconnects++; });
+    room.onLeave((code) => { this.leftWith = code; });
+
+    // Retry straight away, even if the room
+    // was joined a moment ago.
+    room.reconnection.minUptime = 0;
+    room.reconnection.delay = 50;
 
     for (const type of MESSAGES) {
 
@@ -200,6 +226,15 @@ export class Bot {
 
   jump() {
     this.room.send("input", { ...this.input, jump: true });
+  }
+
+  /** Cuts the connection like a network
+   *  failure would (the SDK's own "offline"
+   *  path: the server sees a non-consented
+   *  close). The library then retries. */
+  drop() {
+
+    this.room.connection.close(4010);
   }
 
   private leaving: Promise<void> | null = null;

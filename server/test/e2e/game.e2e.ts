@@ -418,6 +418,10 @@ describe("browser end-to-end (production build)", { skip: skipReason }, () => {
     assert.ok((await sfx()).includes("doorOpen"));
     assert.equal(await b.eval(`${g}.doorLabel.text`), "EXIT");
 
+    // Right away: the message only stays up for 1.6 s, and the pulse check
+    // below can take longer than that on a busy machine.
+    assert.ok((await b.eval<string>(`${g}.messageText.text`)).includes("EXIT OPEN"));
+
     const alphas = new Set<string>();
 
     for (let i = 0; i < 4; i++) {
@@ -428,7 +432,6 @@ describe("browser end-to-end (production build)", { skip: skipReason }, () => {
     }
 
     assert.ok(alphas.size > 1, `pulsing: ${[...alphas].join(" ")}`);
-    assert.ok((await b.eval<string>(`${g}.messageText.text`)).includes("EXIT OPEN"));
 
     await shot("07-door-open");
   });

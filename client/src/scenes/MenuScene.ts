@@ -1,6 +1,11 @@
 import Phaser from "phaser";
+import type { Room } from "@colyseus/sdk";
 
 import { audio } from "../audio/AudioManager";
+
+import { NetworkManager } from "../network/NetworkManager";
+
+import { tabSession } from "../net/session";
 
 import {
   addMuteButton,
@@ -25,8 +30,21 @@ const PLAYER_COLORS = [
 
 export class MenuScene extends Phaser.Scene {
 
+  // Why we are back at the menu (shown once).
+  private notice = "";
+
   constructor() {
     super("MenuScene");
+  }
+
+  init(
+    data: {
+      notice?: string;
+    }
+  ) {
+
+    this.notice =
+      data?.notice ?? "";
   }
 
   create() {
@@ -265,6 +283,200 @@ export class MenuScene extends Phaser.Scene {
         );
       }
     );
+
+    // ----------------------------------------
+    // WHY WE ARE HERE / RESUME
+    // ----------------------------------------
+
+    if (this.notice) {
+
+      const notice =
+        this.showStatus(
+          this.notice,
+          "#ff9999"
+        );
+
+      this.time.delayedCall(
+        4500,
+        () => notice.destroy()
+      );
+
+    } else {
+
+      void this.tryResume();
+    }
+  }
+
+  // ========================================
+  // NOTICE + RESUME
+  // ========================================
+
+  private showStatus(
+    message: string,
+    color: string
+  ) {
+
+    const text =
+      this.add.text(
+        400,
+        480,
+        message,
+        {
+          fontSize: "20px",
+          color,
+          align: "center"
+        }
+      ).setOrigin(0.5);
+
+    return text;
+  }
+
+  // After a page reload the connection library
+  // knows nothing, but the tab remembers the
+  // room it was in. The server keeps a dropped
+  // player's seat for a while: take it back.
+
+  private async tryResume() {
+
+    const saved =
+      tabSession.load();
+
+    if (!saved) {
+      return;
+    }
+
+    const status =
+      this.showStatus(
+        "Rejoining your game...",
+        "#ffcc66"
+      );
+
+    let room: Room | undefined;
+
+    try {
+
+      const network =
+        new NetworkManager();
+
+      const joined =
+        await network.resumeRoom(
+          saved.token
+        );
+
+      room = joined;
+
+      // The server describes the room as soon
+      // as we are back in.
+
+      const resync =
+        await new Promise<any>(
+          (resolve, reject) => {
+
+            const off =
+              joined.onMessage(
+                "resync",
+                (data: any) => {
+
+                  off();
+
+                  resolve(data);
+                }
+              );
+
+            joined.send(
+              "requestResync"
+            );
+
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    "no answer from the room"
+                  )
+                ),
+              5000
+            );
+          }
+        );
+
+      // The player may have clicked something
+      // else while we were connecting.
+
+      if (
+        !this.scene.isActive(
+          "MenuScene"
+        )
+      ) {
+
+        joined.leave().catch(() => {});
+
+        return;
+      }
+
+      if (resync.gameStarted) {
+
+        this.scene.start(
+          "GameScene",
+          {
+            room: joined,
+
+            players:
+              resync.players,
+
+            myPlayer:
+              resync.players.find(
+                (player: any) =>
+                  player.id ===
+                  joined.sessionId
+              )
+          }
+        );
+
+      } else {
+
+        this.scene.start(
+          "LobbyScene",
+          {
+            mode: "resume",
+
+            room: joined,
+
+            resync
+          }
+        );
+      }
+
+    } catch (error) {
+
+      console.warn(
+        "Could not resume:",
+        error
+      );
+
+      tabSession.forget();
+
+      room?.leave().catch(() => {});
+
+      if (
+        this.scene.isActive(
+          "MenuScene"
+        )
+      ) {
+
+        status.setText(
+          "Could not rejoin your game."
+        );
+
+        status.setColor(
+          "#ff9999"
+        );
+
+        this.time.delayedCall(
+          3500,
+          () => status.destroy()
+        );
+      }
+    }
   }
 
   // ========================================

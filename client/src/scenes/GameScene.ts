@@ -3,6 +3,21 @@ import { Room } from "@colyseus/sdk";
 
 import { audio } from "../audio/AudioManager";
 
+import { ConnectionHud } from "../net/ConnectionHud";
+
+import {
+  Predictor,
+  type NetPlayer
+} from "../net/prediction";
+
+import { qualityOf, QUALITY_COLORS } from "../net/latency";
+
+import { NET_SETTINGS } from "../net/settings";
+
+import { SnapshotBuffer } from "../net/snapshots";
+
+import { tabSession } from "../net/session";
+
 import {
   addMuteButton,
   burst,
@@ -37,6 +52,32 @@ interface PlayerData {
 
   jumpCount?: number;
   grounded?: boolean;
+
+  standingOn?: string | null;
+
+  // False while the player's connection is
+  // down and the server holds their seat.
+  connected?: boolean;
+
+  // Last input number the server applied.
+  ack?: number;
+}
+
+// Everything needed to rebuild a client's
+// picture after it missed messages.
+interface ResyncData {
+
+  roomCode: string;
+
+  hostId: string;
+
+  gameStarted: boolean;
+
+  gameFinished: boolean;
+
+  players: PlayerData[];
+
+  level: LevelData | null;
 }
 
 interface PlatformData {
@@ -148,6 +189,9 @@ interface GameState {
   doorOpen: boolean;
 
   playersAtExit: number;
+
+  // How many players the door waits for.
+  playersNeeded?: number;
 }
 
 // ==========================================
@@ -161,6 +205,34 @@ export class GameScene extends Phaser.Scene {
   // ========================================
 
   private room!: Room;
+
+  // Ping chip, "connection lost" veil.
+  private hud: ConnectionHud | null = null;
+
+  // Runs the shared physics on the local
+  // player for instant response (see
+  // net/prediction.ts).
+  private predictor: Predictor | null = null;
+
+  // Recent positions of every OTHER player,
+  // drawn slightly in the past so network
+  // jitter does not show (net/snapshots.ts).
+  private snapshots:
+    Map<string, SnapshotBuffer> =
+    new Map();
+
+  // "connection lost" tag above an absent
+  // player.
+  private ghostLabels:
+    Map<
+      string,
+      Phaser.GameObjects.Text
+    > =
+    new Map();
+
+  // Small ping numbers under the player chips.
+  private latencyLabels:
+    Phaser.GameObjects.Text[] = [];
 
   // ========================================
   // PLAYERS
@@ -348,6 +420,11 @@ export class GameScene extends Phaser.Scene {
     this.hazardObjects = [];
     this.playerFx = new Map();
     this.shownLevel = 0;
+    this.hud = null;
+    this.predictor = null;
+    this.snapshots = new Map();
+    this.ghostLabels = new Map();
+    this.latencyLabels = [];
 
     if (
       data.room
@@ -418,6 +495,30 @@ export class GameScene extends Phaser.Scene {
     this.createInitialPlayers();
 
     this.setupNetwork();
+
+    this.predictor =
+      new Predictor(
+        this.room.sessionId
+      );
+
+    this.hud =
+      new ConnectionHud(
+        this,
+        this.room,
+        {
+          x: 790,
+          y: 592,
+
+          onLost: (code) =>
+            this.connectionLost(code),
+
+          onRestored: () =>
+            this.afterReconnect(),
+
+          onLatencies: () =>
+            this.refreshLatencyLabels()
+        }
+      );
 
     addMuteButton(
       this,
@@ -1146,11 +1247,24 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    fx.tx =
-      player.x;
+    // The local player's position comes from
+    // the prediction, other players' from the
+    // snapshot buffer (see animatePlayers);
+    // the raw server position is only used
+    // when neither applies.
 
-    fx.ty =
-      player.y + 30;
+    if (
+      fx.isLocal
+        ? !NET_SETTINGS.predict
+        : NET_SETTINGS.interpolationMs <= 0
+    ) {
+
+      fx.tx =
+        player.x;
+
+      fx.ty =
+        player.y + 30;
+    }
 
     fx.vx =
       player.velocityX ?? 0;
@@ -1323,6 +1437,56 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
 
+      // ---- where the picture should be ----
+
+      const away =
+        this.playerData.get(id)
+          ?.connected === false;
+
+      if (fx.isLocal) {
+
+        const shown =
+          this.isPredicting()
+            ? this.predictor!.render()
+            : null;
+
+        if (shown) {
+
+          fx.tx = shown.x;
+          fx.ty = shown.y + 30;
+        }
+
+      } else if (
+        NET_SETTINGS.interpolationMs > 0 &&
+        !away
+      ) {
+
+        const at =
+          this.snapshots
+            .get(id)
+            ?.sample(
+              performance.now() -
+                NET_SETTINGS.interpolationMs
+            );
+
+        if (at) {
+
+          fx.tx = at.x;
+          fx.ty = at.y;
+        }
+      }
+
+      const ghost =
+        this.ghostLabels.get(id);
+
+      if (ghost) {
+
+        ghost.setPosition(
+          sprite.x,
+          sprite.y - 76
+        );
+      }
+
       // ---- position ----
 
       const dx =
@@ -1336,6 +1500,18 @@ export class GameScene extends Phaser.Scene {
       ) {
 
         // Teleport (respawn).
+        sprite.setPosition(
+          fx.tx,
+          fx.ty
+        );
+
+      } else if (
+        fx.isLocal &&
+        this.isPredicting()
+      ) {
+
+        // Already smooth; easing would only
+        // add delay.
         sprite.setPosition(
           fx.tx,
           fx.ty
@@ -1727,16 +1903,335 @@ export class GameScene extends Phaser.Scene {
     );
 
     // --------------------------------------
-    // CONNECTION LOST
+    // PLAYER CONNECTION LOST / BACK
     // --------------------------------------
 
-    this.room.onLeave(
-      () => {
+    this.room.onMessage(
+      "playerDropped",
+      (
+        data: {
+          id: string;
+        }
+      ) => {
 
-        this.returnToMenu(
+        this.setAway(
+          data.id,
+          true
+        );
+
+        const player =
+          this.playerData.get(
+            data.id
+          );
+
+        if (
+          data.id !==
+            this.room.sessionId &&
+          player
+        ) {
+
+          this.showTemporaryMessage(
+            `PLAYER ${
+              player.playerIndex + 1
+            } LOST CONNECTION`,
+            1800
+          );
+        }
+      }
+    );
+
+    this.room.onMessage(
+      "playerReconnected",
+      (
+        data: {
+          id: string;
+          x: number;
+          y: number;
+        }
+      ) => {
+
+        this.setAway(
+          data.id,
           false
         );
+
+        this.placeAt(
+          data.id,
+          data.x,
+          data.y
+        );
+
+        if (
+          data.id ===
+          this.room.sessionId
+        ) {
+          return;
+        }
+
+        audio.sfx(
+          "join"
+        );
+
+        const player =
+          this.playerData.get(
+            data.id
+          );
+
+        if (player) {
+
+          this.showTemporaryMessage(
+            `PLAYER ${
+              player.playerIndex + 1
+            } IS BACK`,
+            1400
+          );
+        }
       }
+    );
+
+    // --------------------------------------
+    // FULL RESYNC (after our connection
+    // came back)
+    // --------------------------------------
+
+    this.room.onMessage(
+      "resync",
+      (
+        data: ResyncData
+      ) => {
+
+        this.applyResync(
+          data
+        );
+      }
+    );
+  }
+
+  // ========================================
+  // CONNECTION
+  // ========================================
+
+  // The room is gone for good: the connection
+  // could not be restored, or we left.
+
+  private connectionLost(
+    code: number
+  ) {
+
+    if (this.leaving) {
+      return;
+    }
+
+    // 4000 = we left on purpose.
+
+    this.returnToMenu(
+      false,
+      code === 4000
+        ? undefined
+        : "Connection to the game was lost."
+    );
+  }
+
+  // The library got us back in. The server
+  // sends a resync right after; until then
+  // what the scene shows may be stale.
+
+  private afterReconnect() {
+
+    this.predictor?.reset();
+
+    this.snapshots.clear();
+  }
+
+  // Rebuilds everything from the server's
+  // full picture.
+
+  private applyResync(
+    data: ResyncData
+  ) {
+
+    const present =
+      new Set(
+        data.players.map(
+          player =>
+            player.id
+        )
+      );
+
+    // Players who left while we were away.
+
+    for (
+      const [id, sprite]
+      of Array.from(
+        this.remotePlayers
+      )
+    ) {
+
+      if (!present.has(id)) {
+
+        sprite.destroy();
+
+        this.remotePlayers.delete(id);
+        this.playerFx.delete(id);
+        this.playerData.delete(id);
+        this.snapshots.delete(id);
+
+        this.ghostLabels
+          .get(id)
+          ?.destroy();
+
+        this.ghostLabels.delete(id);
+      }
+    }
+
+    // Everyone who is there now.
+
+    for (const player of data.players) {
+
+      this.playerData.set(
+        player.id,
+        player
+      );
+
+      this.createPlayer(
+        player
+      );
+
+      this.setAway(
+        player.id,
+        player.connected === false
+      );
+
+      this.placeAt(
+        player.id,
+        player.x,
+        player.y
+      );
+    }
+
+    this.predictor?.reset();
+
+    this.snapshots.clear();
+
+    // Rebuild the roster chips.
+
+    this.chipSignature = "";
+
+    this.updatePlayerHud();
+
+    if (data.level) {
+
+      this.applyLevel(
+        data.level
+      );
+    }
+  }
+
+  // Puts a player's sprite at a position
+  // right away (no easing).
+
+  private placeAt(
+    id: string,
+    x: number,
+    y: number
+  ) {
+
+    const sprite =
+      id === this.room.sessionId
+        ? this.localPlayer
+        : this.remotePlayers.get(
+            id
+          );
+
+    const fx =
+      this.playerFx.get(
+        id
+      );
+
+    if (!sprite || !fx) {
+      return;
+    }
+
+    fx.tx = x;
+    fx.ty = y + 30;
+
+    sprite.setPosition(
+      fx.tx,
+      fx.ty
+    );
+
+    this.snapshots.get(
+      id
+    )?.clear();
+
+    if (id === this.room.sessionId) {
+      this.predictor?.reset();
+    }
+  }
+
+  // Greys out a player whose connection is
+  // down.
+
+  private setAway(
+    id: string,
+    away: boolean
+  ) {
+
+    const sprite =
+      id === this.room.sessionId
+        ? this.localPlayer
+        : this.remotePlayers.get(
+            id
+          );
+
+    if (!sprite) {
+      return;
+    }
+
+    sprite.setAlpha(
+      away ? 0.3 : 1
+    );
+
+    const existing =
+      this.ghostLabels.get(
+        id
+      );
+
+    if (!away) {
+
+      existing?.destroy();
+
+      this.ghostLabels.delete(
+        id
+      );
+
+      return;
+    }
+
+    if (existing) {
+      return;
+    }
+
+    this.ghostLabels.set(
+      id,
+      this.add.text(
+        sprite.x,
+        sprite.y - 76,
+        "CONNECTION LOST",
+        {
+          fontSize: "11px",
+          color: "#ffcc66",
+          backgroundColor: "#00000088",
+          padding: {
+            left: 4,
+            right: 4,
+            top: 2,
+            bottom: 2
+          }
+        }
+      )
+        .setOrigin(0.5, 1)
+        .setDepth(40)
     );
   }
 
@@ -1745,7 +2240,8 @@ export class GameScene extends Phaser.Scene {
   // ========================================
 
   private returnToMenu(
-    leaveRoom: boolean
+    leaveRoom: boolean,
+    notice?: string
   ) {
 
     if (this.leaving) {
@@ -1754,6 +2250,11 @@ export class GameScene extends Phaser.Scene {
 
     this.leaving = true;
 
+    // Leaving, or the room is gone: there is
+    // nothing to come back to after a reload.
+
+    tabSession.forget();
+
     if (leaveRoom) {
 
       this.room.leave()
@@ -1761,7 +2262,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.scene.start(
-      "MenuScene"
+      "MenuScene",
+      {
+        notice
+      }
     );
   }
 
@@ -1796,6 +2300,13 @@ export class GameScene extends Phaser.Scene {
     // PLAYERS
     // --------------------------------------
 
+    this.predictor?.setOthers(
+      state.players as NetPlayer[]
+    );
+
+    const received =
+      performance.now();
+
     for (
       const player
       of state.players
@@ -1824,8 +2335,22 @@ export class GameScene extends Phaser.Scene {
           );
         }
 
+        // The predictor compares its guess
+        // with the server and fixes itself.
+
         if (
-          this.localPlayer
+          NET_SETTINGS.predict &&
+          this.predictor
+        ) {
+
+          this.predictor.reconcile(
+            player as NetPlayer
+          );
+        }
+
+        if (
+          this.localPlayer &&
+          !this.isPredicting()
         ) {
 
           this.applyPlayerState(
@@ -1870,6 +2395,36 @@ export class GameScene extends Phaser.Scene {
         sprite.setVisible(
           player.alive !== false
         );
+
+        // Remember where they were, for the
+        // smoothed drawing (animatePlayers).
+
+        let buffer =
+          this.snapshots.get(
+            player.id
+          );
+
+        if (!buffer) {
+
+          buffer =
+            new SnapshotBuffer();
+
+          this.snapshots.set(
+            player.id,
+            buffer
+          );
+        }
+
+        buffer.push(
+          received,
+          player.x,
+          player.y + 30
+        );
+
+        this.setAway(
+          player.id,
+          player.connected === false
+        );
       }
     }
 
@@ -1882,12 +2437,26 @@ export class GameScene extends Phaser.Scene {
         `EXIT ${
           state.playersAtExit
         }/${
-          state.players.length
+          state.playersNeeded ??
+            state.players.length
         }`
       );
     }
 
     this.updatePlayerHud();
+  }
+
+  // True while the local sprite is driven by
+  // the prediction instead of the server.
+
+  private isPredicting(): boolean {
+
+    return (
+      NET_SETTINGS.predict &&
+      !this.gameFinished &&
+      !this.hud?.offline &&
+      this.predictor?.body != null
+    );
   }
 
   // ========================================
@@ -2053,10 +2622,20 @@ export class GameScene extends Phaser.Scene {
 
       this.shownLevel =
         data.level;
+
+      // Everyone is moved to the spawn points.
+      this.predictor?.reset();
+
+      this.snapshots.clear();
     }
 
     this.targetScore =
       data.targetScore;
+
+    this.predictor?.setWorld({
+      platforms: data.platforms,
+      pits: data.pits
+    });
 
     this.levelText.setText(
       `LEVEL ${
@@ -2133,7 +2712,10 @@ export class GameScene extends Phaser.Scene {
     const signature =
       players.map(
         player =>
-          player.id
+          player.id +
+          (player.connected === false
+            ? "!"
+            : "")
       ).join(
         ","
       );
@@ -2157,6 +2739,17 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.playerChips =
+      [];
+
+    for (
+      const label
+      of this.latencyLabels
+    ) {
+
+      label.destroy();
+    }
+
+    this.latencyLabels =
       [];
 
     this.statusText.setText(
@@ -2195,11 +2788,101 @@ export class GameScene extends Phaser.Scene {
           10
         );
 
+        if (
+          player.connected === false
+        ) {
+
+          chip.setAlpha(
+            0.35
+          );
+        }
+
         this.playerChips.push(
           chip
         );
+
+        // Ping under the chip.
+
+        const label =
+          this.add.text(
+            780 - index * 24 - 8,
+            72,
+            "",
+            {
+              fontSize: "10px",
+              color: "#888888"
+            }
+          ).setOrigin(
+            0.5,
+            0
+          );
+
+        label.setDepth(
+          10
+        );
+
+        label.setData(
+          "id",
+          player.id
+        );
+
+        this.latencyLabels.push(
+          label
+        );
       }
     );
+
+    this.refreshLatencyLabels();
+  }
+
+  // The ping numbers under the player chips.
+
+  private refreshLatencyLabels() {
+
+    for (
+      const label
+      of this.latencyLabels
+    ) {
+
+      if (!label.active) {
+        continue;
+      }
+
+      const id =
+        label.getData(
+          "id"
+        ) as string;
+
+      const away =
+        this.playerData.get(id)
+          ?.connected === false;
+
+      const rtt =
+        away
+          ? null
+          : this.hud?.rttOf(
+              id
+            ) ?? null;
+
+      label.setText(
+        away
+          ? "×"
+          : rtt === null
+            ? ""
+            : String(rtt)
+      );
+
+      label.setColor(
+        "#" +
+          QUALITY_COLORS[
+            away
+              ? "offline"
+              : qualityOf(rtt)
+          ]
+            .toString(16)
+            .padStart(6, "0")
+      );
+    }
   }
 
   // ========================================
@@ -2573,6 +3256,17 @@ export class GameScene extends Phaser.Scene {
         fx.ty
       );
 
+      this.snapshots.get(
+        data.id
+      )?.clear();
+
+      if (isLocal) {
+
+        // The server moved us: guess again
+        // from its next state.
+        this.predictor?.reset();
+      }
+
       this.tweens.killTweensOf(
         fx
       );
@@ -2763,18 +3457,43 @@ export class GameScene extends Phaser.Scene {
     delta: number
   ) {
 
-    if (this.room) {
-
-      this.animatePlayers(
-        delta
-      );
+    if (!this.room) {
+      return;
     }
 
-    if (
-      !this.room ||
-      !this.localPlayer
-    ) {
+    // Input and prediction first, so the
+    // picture drawn this frame already
+    // contains this frame's key presses.
 
+    this.driveLocalPlayer(
+      delta
+    );
+
+    this.animatePlayers(
+      delta
+    );
+
+    if (this.localPlayer) {
+
+      this.youMarker.setPosition(
+        this.localPlayer.x,
+        this.localPlayer.y - 68
+      );
+
+      this.youMarker.setVisible(
+        true
+      );
+    }
+  }
+
+  // Reads the keys, runs the prediction and
+  // sends the input to the server.
+
+  private driveLocalPlayer(
+    delta: number
+  ) {
+
+    if (!this.localPlayer) {
       return;
     }
 
@@ -2804,15 +3523,6 @@ export class GameScene extends Phaser.Scene {
         this.keys.W
       );
 
-    this.youMarker.setPosition(
-      this.localPlayer.x,
-      this.localPlayer.y - 68
-    );
-
-    this.youMarker.setVisible(
-      true
-    );
-
     if (this.gameFinished) {
 
       if (
@@ -2829,15 +3539,92 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    // While the connection is down the
+    // library would only queue the input and
+    // replay a burst of it later: wait instead.
+
+    if (this.hud?.offline) {
+      return;
+    }
+
+    const input = {
+      left,
+
+      right,
+
+      jump
+    };
+
+    let seq: number | null = null;
+
+    if (
+      NET_SETTINGS.predict &&
+      this.predictor
+    ) {
+
+      seq =
+        this.predictor.step(
+          input,
+          delta / 1000
+        );
+
+      this.predictor.decay(
+        delta / 1000
+      );
+
+      this.showPredictedEffects();
+    }
+
     this.room.send(
       "input",
+      seq === null
+        ? input
+        : {
+            ...input,
+            seq
+          }
+    );
+  }
+
+  // Jump and landing effects come from the
+  // predicted state, so they play at once
+  // instead of a round trip later.
+
+  private showPredictedEffects() {
+
+    const body =
+      this.predictor?.body;
+
+    if (
+      !body ||
+      !this.localPlayer ||
+      !this.isPredicting()
+    ) {
+      return;
+    }
+
+    this.applyPlayerState(
       {
-        left,
+        id:
+          this.room.sessionId,
 
-        right,
+        x: body.x,
+        y: body.y,
 
-        jump
-      }
+        playerIndex: 0,
+        color: 0,
+        ready: true,
+
+        velocityX: body.velocityX,
+        velocityY: body.velocityY,
+
+        alive: true,
+
+        jumpCount: body.jumpCount,
+
+        grounded: body.grounded
+      },
+      this.localPlayer
     );
   }
 
@@ -2850,6 +3637,29 @@ export class GameScene extends Phaser.Scene {
     console.log(
       "GameScene shutting down."
     );
+
+    this.hud?.dispose();
+
+    this.hud = null;
+
+    this.predictor = null;
+
+    this.snapshots.clear();
+
+    for (
+      const label
+      of [
+        ...this.ghostLabels.values(),
+        ...this.latencyLabels
+      ]
+    ) {
+
+      label.destroy();
+    }
+
+    this.ghostLabels.clear();
+
+    this.latencyLabels = [];
 
     // Stop listening: the server may still
     // send messages while we leave, and the

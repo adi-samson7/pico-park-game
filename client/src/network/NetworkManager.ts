@@ -8,6 +8,40 @@ import {
   SERVER_WS_URL
 } from "../config";
 
+import { tabSession } from "../net/session";
+
+import { NET_SETTINGS } from "../net/settings";
+
+// How many times the client library tries to
+// get back into a room after the connection
+// dropped. With its growing delay (0.2 s, 0.4 s,
+// ... up to 5 s) ten attempts take about half a
+// minute, which matches the 30 s the server
+// holds a dropped player's seat.
+export const RECONNECT_ATTEMPTS =
+  NET_SETTINGS.reconnectAttempts;
+
+/** Settings every joined room needs, and
+ *  remembering it so a page reload can come
+ *  back to it. */
+export function prepareRoom(
+  room: Room,
+  roomCode?: string
+) {
+
+  room.reconnection.maxRetries =
+    RECONNECT_ATTEMPTS;
+
+  // Retry even if the connection fails soon
+  // after joining.
+  room.reconnection.minUptime = 0;
+
+  tabSession.remember(
+    room.reconnectionToken,
+    roomCode
+  );
+}
+
 export class NetworkManager {
 
   private client: Client;
@@ -36,6 +70,10 @@ export class NetworkManager {
       await this.client.create(
         "game"
       );
+
+    prepareRoom(
+      this.room
+    );
 
     console.log(
       "Room created:",
@@ -140,6 +178,10 @@ export class NetworkManager {
         roomId
       );
 
+    prepareRoom(
+      this.room
+    );
+
     console.log(
       "Joined room:",
       this.room.roomId
@@ -154,10 +196,42 @@ export class NetworkManager {
   }
 
   // ==========================================
+  // RESUME (after a page reload)
+  // ==========================================
+
+  async resumeRoom(
+    token: string
+  ): Promise<Room> {
+
+    console.log(
+      "Resuming session..."
+    );
+
+    this.room =
+      await this.client.reconnect(
+        token
+      );
+
+    prepareRoom(
+      this.room
+    );
+
+    console.log(
+      "Resumed room:",
+      this.room.roomId
+    );
+
+    return this.room;
+  }
+
+  // ==========================================
   // LEAVE
   // ==========================================
 
   async leaveRoom() {
+
+    // Leaving on purpose: nothing to resume.
+    tabSession.forget();
 
     if (!this.room) {
       return;

@@ -63,6 +63,18 @@ interface Player {
 
   // Timestamp of the last input message.
   lastInputAt: number;
+
+  // False while the connection is lost and
+  // the player is inside the reconnection
+  // window. Such a player keeps their seat
+  // but is not simulated, not solid and
+  // does not block the exit or the lobby.
+  connected: boolean;
+
+  // Sequence number of the last input the
+  // server applied. Echoed in every state
+  // so the client can reconcile prediction.
+  lastSeq: number;
 }
 
 interface PlayerInput {
@@ -72,6 +84,9 @@ interface PlayerInput {
   right?: boolean;
 
   jump?: boolean;
+
+  // Client-side input counter (see lastSeq).
+  seq?: number;
 }
 
 interface Crystal {
@@ -148,6 +163,35 @@ export class GameRoom extends Room {
   // Session id of the player allowed to
   // start the game.
   private hostId = "";
+
+  // ========================================
+  // RECONNECTION
+  // ========================================
+
+  // How long a dropped player keeps their
+  // seat. Read when a drop happens so tests
+  // (and operators) can change it with the
+  // RECONNECT_WINDOW_SECONDS variable.
+  private reconnectWindowSeconds():
+    number {
+
+    const configured =
+      Number(
+        process.env
+          .RECONNECT_WINDOW_SECONDS
+      );
+
+    return Number.isFinite(configured) &&
+      configured > 0
+      ? configured
+      : 30;
+  }
+
+  // Latest round-trip time reported by
+  // each player, in milliseconds.
+  private rtts:
+    Map<string, number> =
+    new Map();
 
   // ========================================
   // LEVEL DATA
@@ -254,13 +298,28 @@ export class GameRoom extends Room {
         if (
           !this.gameStarted ||
           this.gameFinished ||
-          !player.alive
+          !player.alive ||
+          !player.connected
         ) {
           return;
         }
 
         player.lastInputAt =
           Date.now();
+
+        // Only ever move forward: a late or
+        // forged number must not make the
+        // client reconcile against the past.
+
+        if (
+          typeof message.seq === "number" &&
+          Number.isFinite(message.seq) &&
+          message.seq > player.lastSeq
+        ) {
+
+          player.lastSeq =
+            Math.floor(message.seq);
+        }
 
         // ------------------------------------
         // HORIZONTAL MOVEMENT
@@ -463,6 +522,86 @@ export class GameRoom extends Room {
     );
 
     // ========================================
+    // RESYNC
+    // ========================================
+    //
+    // A client that suspects it missed
+    // something (for example after its
+    // connection came back) asks for the
+    // whole picture again.
+
+    this.onMessage(
+      "requestResync",
+      (client) => {
+
+        const player =
+          this.players.get(
+            client.sessionId
+          );
+
+        if (player) {
+
+          client.send(
+            "resync",
+            this.resyncPayload()
+          );
+        }
+      }
+    );
+
+    // ========================================
+    // LATENCY
+    // ========================================
+    //
+    // Each client measures its own round trip
+    // and reports it. The values are only
+    // shown to players (never used by the
+    // rules), so they are just sanity-checked.
+
+    this.onMessage(
+      "latency",
+      (
+        client,
+        message
+      ) => {
+
+        const player =
+          this.players.get(
+            client.sessionId
+          );
+
+        const rtt =
+          Number(message?.rtt);
+
+        if (
+          !player ||
+          !Number.isFinite(rtt)
+        ) {
+          return;
+        }
+
+        this.rtts.set(
+          player.id,
+          Math.max(
+            0,
+            Math.min(
+              5000,
+              Math.round(rtt)
+            )
+          )
+        );
+      }
+    );
+
+    this.clock.setInterval(
+      () => {
+
+        this.broadcastLatencies();
+      },
+      1000
+    );
+
+    // ========================================
     // SERVER GAME LOOP
     // ========================================
 
@@ -562,7 +701,13 @@ export class GameRoom extends Room {
         null,
 
       lastInputAt:
-        Date.now()
+        Date.now(),
+
+      connected:
+        true,
+
+      lastSeq:
+        0
     };
 
     this.players.set(
@@ -674,6 +819,10 @@ export class GameRoom extends Room {
   // LEAVE
   // ==========================================
 
+  // Also called, after the reconnection
+  // window ran out, for a player who
+  // dropped and never came back.
+
   onLeave(
     client: Client
   ) {
@@ -687,6 +836,10 @@ export class GameRoom extends Room {
       client.sessionId
     );
 
+    this.rtts.delete(
+      client.sessionId
+    );
+
     this.broadcast(
       "playerLeft",
       {
@@ -695,44 +848,335 @@ export class GameRoom extends Room {
       }
     );
 
-    // ----------------------------------------
-    // HOST MIGRATION
-    // ----------------------------------------
-    //
-    // If the host leaves, the player with
-    // the lowest index takes over so the
-    // lobby can never get stuck.
+    this.electHost();
+
+    this.checkAllPlayersReady();
+  }
+
+  // ==========================================
+  // DROP (connection lost, not a "Leave")
+  // ==========================================
+  //
+  // Network blip, closed laptop, page reload:
+  // keep the player's seat for a while. The
+  // client library retries on its own; if it
+  // succeeds onReconnect() runs, if the time
+  // runs out onLeave() removes the player.
+
+  onDrop(
+    client: Client,
+    code?: number
+  ) {
+
+    const player =
+      this.players.get(
+        client.sessionId
+      );
+
+    // Nothing worth holding a seat for once
+    // the game is over.
 
     if (
-      client.sessionId ===
-      this.hostId
+      !player ||
+      this.gameFinished
     ) {
+      return;
+    }
 
-      const next =
+    const seconds =
+      this.reconnectWindowSeconds();
+
+    log(
+      "Player dropped:",
+      client.sessionId,
+      `(code ${code}),`,
+      `holding the seat for ${seconds}s`
+    );
+
+    player.connected =
+      false;
+
+    player.velocityX =
+      0;
+
+    this.broadcast(
+      "playerDropped",
+      {
+        id:
+          player.id,
+
+        seconds
+      }
+    );
+
+    this.electHost();
+
+    this.checkAllPlayersReady();
+
+    this.allowReconnection(
+      client,
+      seconds
+    ).catch(() => {
+
+      // Timed out. The room now calls
+      // onLeave() for this client.
+    });
+  }
+
+  // ==========================================
+  // RECONNECT
+  // ==========================================
+
+  onReconnect(
+    client: Client
+  ) {
+
+    const player =
+      this.players.get(
+        client.sessionId
+      );
+
+    if (!player) {
+
+      client.leave();
+
+      return;
+    }
+
+    log(
+      "Player reconnected:",
+      client.sessionId
+    );
+
+    player.connected =
+      true;
+
+    player.lastInputAt =
+      Date.now();
+
+    // A reloaded page starts counting its
+    // inputs from the beginning again.
+
+    player.lastSeq =
+      0;
+
+    // Back at the spawn point: the world
+    // moved on while they were away and the
+    // old spot may now be occupied.
+
+    if (this.gameStarted) {
+
+      this.placeAtSpawn(
+        player
+      );
+    }
+
+    this.broadcast(
+      "playerReconnected",
+      {
+        id:
+          player.id,
+
+        x:
+          player.x,
+
+        y:
+          player.y
+      }
+    );
+
+    this.electHost();
+
+    // They missed everything that happened
+    // while they were gone: send it all.
+
+    client.send(
+      "resync",
+      this.resyncPayload()
+    );
+
+    this.checkAllPlayersReady();
+  }
+
+  // ==========================================
+  // HOST
+  // ==========================================
+  //
+  // The host must be someone who is actually
+  // connected, otherwise the lobby could get
+  // stuck waiting for a host who is gone. The
+  // connected player with the lowest index
+  // takes over.
+
+  private electHost() {
+
+    const current =
+      this.players.get(
+        this.hostId
+      );
+
+    if (current?.connected) {
+      return;
+    }
+
+    const connected =
+      Array.from(
+        this.players.values()
+      ).filter(
+        player =>
+          player.connected
+      ).sort(
+        (a, b) =>
+          a.playerIndex -
+          b.playerIndex
+      );
+
+    const next =
+      connected[0];
+
+    // Nobody connected: keep whoever is
+    // there so they get the seat back.
+
+    if (!next) {
+
+      if (!current) {
+
+        this.hostId =
+          Array.from(
+            this.players.values()
+          )[0]?.id ?? "";
+      }
+
+      return;
+    }
+
+    this.hostId =
+      next.id;
+
+    this.broadcast(
+      "hostChanged",
+      {
+        id:
+          next.id
+      }
+    );
+  }
+
+  // ==========================================
+  // RESYNC PAYLOAD
+  // ==========================================
+  //
+  // Everything a client needs to rebuild its
+  // picture of the room from scratch.
+
+  private resyncPayload() {
+
+    return {
+
+      roomCode:
+        this.roomCode,
+
+      hostId:
+        this.hostId,
+
+      gameStarted:
+        this.gameStarted,
+
+      gameFinished:
+        this.gameFinished,
+
+      allReady:
+        this.areAllPlayersReady(),
+
+      players:
         Array.from(
           this.players.values()
-        ).sort(
-          (a, b) =>
-            a.playerIndex -
-            b.playerIndex
-        )[0];
+        ).map(
+          player => ({
 
-      this.hostId =
-        next?.id ?? "";
-
-      if (next) {
-
-        this.broadcast(
-          "hostChanged",
-          {
             id:
-              next.id
-          }
-        );
+              player.id,
+
+            x:
+              player.x,
+
+            y:
+              player.y,
+
+            playerIndex:
+              player.playerIndex,
+
+            color:
+              player.color,
+
+            ready:
+              player.ready,
+
+            alive:
+              player.alive,
+
+            connected:
+              player.connected,
+
+            jumpCount:
+              player.jumpCount,
+
+            grounded:
+              player.grounded,
+
+            velocityX:
+              player.velocityX,
+
+            velocityY:
+              player.velocityY
+          })
+        ),
+
+      level:
+        this.gameStarted ||
+        this.gameFinished
+          ? this.levelPayload()
+          : null
+    };
+  }
+
+  // ==========================================
+  // LATENCIES
+  // ==========================================
+
+  private broadcastLatencies() {
+
+    const rtts:
+      Record<string, number> = {};
+
+    for (
+      const [id, rtt]
+      of this.rtts
+    ) {
+
+      if (this.players.has(id)) {
+
+        rtts[id] = rtt;
       }
     }
 
-    this.checkAllPlayersReady();
+    this.broadcast(
+      "latencies",
+      {
+        rtts
+      }
+    );
+  }
+
+  private connectedPlayers():
+    Player[] {
+
+    return Array.from(
+      this.players.values()
+    ).filter(
+      player =>
+        player.connected
+    );
   }
 
   // ==========================================
@@ -769,10 +1213,15 @@ export class GameRoom extends Room {
     // (closed laptop, hidden tab) must not
     // keep running in its last direction.
 
-    for (
-      const player
-      of this.players.values()
-    ) {
+    // Players whose connection dropped are
+    // not simulated at all: they are not
+    // solid, nobody can stand on them and
+    // they stay where they were.
+
+    const active =
+      this.connectedPlayers();
+
+    for (const player of active) {
 
       if (
         now - player.lastInputAt >
@@ -785,9 +1234,7 @@ export class GameRoom extends Room {
 
     const fallen =
       stepPlayers(
-        Array.from(
-          this.players.values()
-        ),
+        active,
         this.platforms,
         deltaTime / 1000,
         this.pits
@@ -807,10 +1254,7 @@ export class GameRoom extends Room {
       }
     }
 
-    for (
-      const player
-      of this.players.values()
-    ) {
+    for (const player of active) {
 
       if (
         player.alive &&
@@ -910,7 +1354,7 @@ export class GameRoom extends Room {
 
     for (
       const player
-      of this.players.values()
+      of this.connectedPlayers()
     ) {
 
       if (!player.alive) {
@@ -994,7 +1438,7 @@ export class GameRoom extends Room {
 
     for (
       const player
-      of this.players.values()
+      of this.connectedPlayers()
     ) {
 
       if (!player.alive) {
@@ -1021,19 +1465,24 @@ export class GameRoom extends Room {
 
   // The level is complete when the door is
   // open and EVERY connected player is in it.
+  // A player who dropped and may still come
+  // back does not hold everyone else up.
 
   private checkExit() {
 
+    const needed =
+      this.connectedPlayers().length;
+
     if (
       !this.doorOpen ||
-      this.players.size === 0
+      needed === 0
     ) {
       return;
     }
 
     if (
       this.playersAtExit() ===
-      this.players.size
+      needed
     ) {
 
       this.completeLevel();
@@ -1356,7 +1805,18 @@ export class GameRoom extends Room {
             player.jumpCount,
 
           grounded:
-            player.grounded
+            player.grounded,
+
+          standingOn:
+            player.standingOn,
+
+          connected:
+            player.connected,
+
+          // Last input the server applied
+          // (for client prediction).
+          ack:
+            player.lastSeq
         })
       );
 
@@ -1388,7 +1848,12 @@ export class GameRoom extends Room {
           this.doorOpen,
 
         playersAtExit:
-          this.playersAtExit()
+          this.playersAtExit(),
+
+        // How many players the door waits
+        // for (the connected ones).
+        playersNeeded:
+          this.connectedPlayers().length
       }
     );
   }
@@ -1400,15 +1865,21 @@ export class GameRoom extends Room {
   private areAllPlayersReady():
     boolean {
 
+    // Players who dropped do not hold up the
+    // start.
+
+    const connected =
+      this.connectedPlayers();
+
     if (
-      this.players.size === 0
+      connected.length === 0
     ) {
       return false;
     }
 
     for (
       const player
-      of this.players.values()
+      of connected
     ) {
 
       if (
