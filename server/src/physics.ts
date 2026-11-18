@@ -41,8 +41,39 @@ export const PHYSICS = {
 
   // Vertical overlap (px) that counts as
   // a real collision rather than contact.
-  CONTACT_SLOP: 2
+  CONTACT_SLOP: 2,
+
+  // Below this y a player has fallen out
+  // of the world (their box is off screen).
+  KILL_Y: 660,
+
+  // Spike strips.
+  SPIKE_HEIGHT: 16,
+
+  // Spikes are forgiving: the player must
+  // sink this far into them to be hit...
+  SPIKE_SINK: 6,
+
+  // ...and overlap them by this much less
+  // than their full width on each side.
+  SPIKE_MARGIN: 6
 } as const;
+
+// A gap in the ground, x1..x2 (world px).
+export interface Pit {
+
+  x1: number;
+  x2: number;
+}
+
+// A strip of spikes sitting ON a surface.
+// x is the centre, y the surface top.
+export interface Spikes {
+
+  x: number;
+  y: number;
+  width: number;
+}
 
 export interface PhysicsBody {
 
@@ -137,7 +168,8 @@ export function tryJump(
 export function stepPlayers(
   players: PhysicsBody[],
   platforms: PhysicsPlatform[],
-  deltaSeconds: number
+  deltaSeconds: number,
+  pits: Pit[] = []
 ): string[] {
 
   const dt =
@@ -243,7 +275,9 @@ export function stepPlayers(
 
     let landed =
       landOnGround(
-        player
+        player,
+        startY,
+        pits
       );
 
     if (!landed) {
@@ -295,7 +329,7 @@ export function stepPlayers(
 
     if (
       player.y >
-      PHYSICS.WORLD_HEIGHT + 100
+      PHYSICS.KILL_Y
     ) {
 
       fallen.push(
@@ -484,20 +518,72 @@ function keepStanding(
     true;
 }
 
-function landOnGround(
-  player: PhysicsBody
+/**
+ * True if any part of the player's feet
+ * rests on solid ground, i.e. they are not
+ * entirely over a pit.
+ */
+export function groundSupports(
+  x: number,
+  pits: Pit[]
 ): boolean {
 
-  const groundY =
-    PHYSICS.GROUND_TOP -
+  const half =
+    PHYSICS.PLAYER_WIDTH / 2;
+
+  const left =
+    x - half;
+
+  const right =
+    x + half;
+
+  return !pits.some(
+    pit =>
+      pit.x1 <= left &&
+      pit.x2 >= right
+  );
+}
+
+function landOnGround(
+  player: PhysicsBody,
+  startY: number,
+  pits: Pit[]
+): boolean {
+
+  if (player.velocityY < 0) {
+    return false;
+  }
+
+  const halfH =
     PHYSICS.PLAYER_HEIGHT / 2;
 
-  if (player.y < groundY) {
+  const top =
+    PHYSICS.GROUND_TOP;
+
+  // Swept: the feet must have been above
+  // the floor last tick. A player already
+  // below it (falling through a pit) must
+  // never be snapped back up by solid
+  // ground at the pit's edge.
+
+  if (
+    startY + halfH > top + 1 ||
+    player.y + halfH < top
+  ) {
+    return false;
+  }
+
+  if (
+    !groundSupports(
+      player.x,
+      pits
+    )
+  ) {
     return false;
   }
 
   player.y =
-    groundY;
+    top - halfH;
 
   player.velocityY =
     0;
@@ -509,6 +595,55 @@ function landOnGround(
     true;
 
   return true;
+}
+
+/**
+ * True if the player is touching any spike
+ * strip. Deliberately forgiving: the feet
+ * must sink into the spikes and the
+ * overlap is shrunk at the sides.
+ */
+export function touchesSpikes(
+  player: PhysicsBody,
+  spikes: Spikes[]
+): boolean {
+
+  const halfW =
+    PHYSICS.PLAYER_WIDTH / 2;
+
+  const halfH =
+    PHYSICS.PLAYER_HEIGHT / 2;
+
+  const feet =
+    player.y + halfH;
+
+  const head =
+    player.y - halfH;
+
+  for (const strip of spikes) {
+
+    const top =
+      strip.y -
+      PHYSICS.SPIKE_HEIGHT;
+
+    if (
+      Math.abs(
+        player.x - strip.x
+      ) <
+        strip.width / 2 +
+        halfW -
+        PHYSICS.SPIKE_MARGIN &&
+      feet >
+        top +
+        PHYSICS.SPIKE_SINK &&
+      head < strip.y
+    ) {
+
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**

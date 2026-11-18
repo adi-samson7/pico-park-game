@@ -10,7 +10,10 @@ import {
 import {
   PHYSICS,
   stepPlayers,
-  tryJump
+  touchesSpikes,
+  tryJump,
+  type Pit,
+  type Spikes
 } from "../physics.js";
 
 // ==========================================
@@ -91,6 +94,14 @@ interface LevelData {
     y: number;
   };
 
+  // Gaps in the ground. Falling in respawns
+  // the player at their spawn point.
+  pits: Pit[];
+
+  // Spike strips. Touching one respawns
+  // the player at their spawn point.
+  spikes: Spikes[];
+
   crystals: {
     x: number;
     y: number;
@@ -130,6 +141,11 @@ export class GameRoom extends Room {
   private targetScore = 10;
 
   private doorOpen = false;
+
+  // Hazards of the current level.
+  private pits: Pit[] = [];
+
+  private spikes: Spikes[] = [];
 
   private exit = {
     x: 0,
@@ -226,6 +242,14 @@ export class GameRoom extends Room {
     {
       exit: { x: 250, y: 258 },
 
+      pits: [
+        { x1: 610, x2: 730 }
+      ],
+
+      spikes: [
+        { x: 235, y: 540, width: 70 }
+      ],
+
       platforms: [
 
         {
@@ -271,7 +295,12 @@ export class GameRoom extends Room {
         { x: 670, y: 410 },
 
         { x: 280, y: 260 },
-        { x: 350, y: 260 }
+        { x: 350, y: 260 },
+
+        // over the pit
+        { x: 640, y: 480 },
+        { x: 690, y: 480 },
+        { x: 765, y: 510 }
       ]
     },
 
@@ -281,6 +310,15 @@ export class GameRoom extends Room {
 
     {
       exit: { x: 470, y: 178 },
+
+      pits: [
+        { x1: 220, x2: 390 }
+      ],
+
+      spikes: [
+        { x: 480, y: 420, width: 40 },
+        { x: 660, y: 540, width: 80 }
+      ],
 
       platforms: [
 
@@ -335,7 +373,12 @@ export class GameRoom extends Room {
         { x: 250, y: 210 },
 
         { x: 490, y: 180 },
-        { x: 550, y: 180 }
+        { x: 550, y: 180 },
+
+        // over the pit
+        { x: 250, y: 490 },
+        { x: 305, y: 470 },
+        { x: 360, y: 490 }
       ]
     },
 
@@ -345,6 +388,14 @@ export class GameRoom extends Room {
 
     {
       exit: { x: 300, y: 178 },
+
+      pits: [
+        { x1: 215, x2: 385 }
+      ],
+
+      spikes: [
+        { x: 630, y: 540, width: 80 }
+      ],
 
       platforms: [
 
@@ -399,7 +450,12 @@ export class GameRoom extends Room {
         { x: 690, y: 360 },
 
         { x: 330, y: 180 },
-        { x: 410, y: 180 }
+        { x: 410, y: 180 },
+
+        // over the pit
+        { x: 270, y: 490 },
+        { x: 300, y: 470 },
+        { x: 330, y: 490 }
       ]
     }
   ];
@@ -1005,7 +1061,8 @@ export class GameRoom extends Room {
           this.players.values()
         ),
         this.platforms,
-        deltaTime / 1000
+        deltaTime / 1000,
+        this.pits
       );
 
     for (const id of fallen) {
@@ -1016,7 +1073,28 @@ export class GameRoom extends Room {
       if (player) {
 
         this.respawnPlayer(
-          player
+          player,
+          "fell"
+        );
+      }
+    }
+
+    for (
+      const player
+      of this.players.values()
+    ) {
+
+      if (
+        player.alive &&
+        touchesSpikes(
+          player,
+          this.spikes
+        )
+      ) {
+
+        this.respawnPlayer(
+          player,
+          "spikes"
         );
       }
     }
@@ -1071,7 +1149,8 @@ export class GameRoom extends Room {
   // ==========================================
 
   private respawnPlayer(
-    player: Player
+    player: Player,
+    cause: "fell" | "spikes"
   ) {
 
     this.placeAtSpawn(
@@ -1088,7 +1167,9 @@ export class GameRoom extends Room {
           player.x,
 
         y:
-          player.y
+          player.y,
+
+        cause
       }
     );
   }
@@ -1400,6 +1481,20 @@ export class GameRoom extends Room {
     this.doorOpen =
       false;
 
+    this.pits =
+      level.pits.map(
+        pit => ({
+          ...pit
+        })
+      );
+
+    this.spikes =
+      level.spikes.map(
+        strip => ({
+          ...strip
+        })
+      );
+
     this.targetScore =
       level.crystals.length;
 
@@ -1475,7 +1570,16 @@ export class GameRoom extends Room {
       },
 
       doorOpen:
-        this.doorOpen
+        this.doorOpen,
+
+      pits:
+        this.pits,
+
+      spikes:
+        this.spikes,
+
+      spikeHeight:
+        PHYSICS.SPIKE_HEIGHT
     };
   }
 

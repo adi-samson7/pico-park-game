@@ -69,6 +69,14 @@ interface LevelData {
   };
 
   doorOpen: boolean;
+
+  // Gaps in the ground (x1..x2).
+  pits: { x1: number; x2: number }[];
+
+  // Spike strips: x = centre, y = surface.
+  spikes: { x: number; y: number; width: number }[];
+
+  spikeHeight: number;
 }
 
 // Sent every server tick.
@@ -153,8 +161,16 @@ export class GameScene extends Phaser.Scene {
   // WORLD
   // ========================================
 
-  private ground!:
-    Phaser.GameObjects.Rectangle;
+  // Ground segments + pit voids (rebuilt
+  // for every level).
+  private groundObjects:
+    Phaser.GameObjects.GameObject[] =
+    [];
+
+  // Spike strips (rebuilt for every level).
+  private hazardObjects:
+    Phaser.GameObjects.GameObject[] =
+    [];
 
   private platformObjects:
     Phaser.GameObjects.Rectangle[] =
@@ -271,6 +287,8 @@ export class GameScene extends Phaser.Scene {
     this.doorRect = null;
     this.doorLabel = null;
     this.doorOpen = false;
+    this.groundObjects = [];
+    this.hazardObjects = [];
 
     if (
       data.room
@@ -499,7 +517,7 @@ export class GameScene extends Phaser.Scene {
       this.add.text(
         400,
         572,
-        "A / D or ← / → move   |   SPACE jump (press again in the air to double jump)   |   stand on each other!",
+        "A / D or ← / → move   |   SPACE jump (press again in the air to double jump)   |   stand on each other!   |   avoid spikes and pits",
         {
           fontSize:
             "13px",
@@ -547,19 +565,185 @@ export class GameScene extends Phaser.Scene {
 
   private createGround() {
 
-    this.ground =
-      this.add.rectangle(
-        400,
-        570,
-        800,
-        60,
-        0x333333
+    // Solid until the level data arrives.
+
+    this.buildGround(
+      []
+    );
+  }
+
+  // Solid ground everywhere except the pits.
+
+  private buildGround(
+    pits: LevelData["pits"]
+  ) {
+
+    for (
+      const object
+      of this.groundObjects
+    ) {
+
+      object.destroy();
+    }
+
+    this.groundObjects =
+      [];
+
+    const sorted =
+      [...pits].sort(
+        (a, b) =>
+          a.x1 - b.x1
       );
 
-    this.physics.add.existing(
-      this.ground,
-      true
+    let cursor = 0;
+
+    const addSolid = (
+      from: number,
+      to: number
+    ) => {
+
+      if (to <= from) {
+        return;
+      }
+
+      this.groundObjects.push(
+        this.add.rectangle(
+          (from + to) / 2,
+          570,
+          to - from,
+          60,
+          0x333333
+        )
+      );
+    };
+
+    for (const pit of sorted) {
+
+      addSolid(
+        cursor,
+        pit.x1
+      );
+
+      // The void: darker, with a red edge
+      // so the danger is obvious.
+
+      const hole =
+        this.add.rectangle(
+          (pit.x1 + pit.x2) / 2,
+          570,
+          pit.x2 - pit.x1,
+          60,
+          0x110505
+        );
+
+      hole.setStrokeStyle(
+        2,
+        0x662222
+      );
+
+      this.groundObjects.push(
+        hole
+      );
+
+      cursor =
+        pit.x2;
+    }
+
+    addSolid(
+      cursor,
+      800
     );
+  }
+
+  // ========================================
+  // SPIKES
+  // ========================================
+
+  private buildSpikes(
+    spikes: LevelData["spikes"],
+    height: number
+  ) {
+
+    for (
+      const object
+      of this.hazardObjects
+    ) {
+
+      object.destroy();
+    }
+
+    this.hazardObjects =
+      [];
+
+    const TOOTH = 10;
+
+    for (const strip of spikes) {
+
+      const graphics =
+        this.add.graphics();
+
+      graphics.fillStyle(
+        0xdddddd,
+        1
+      );
+
+      graphics.lineStyle(
+        1,
+        0xff4444,
+        1
+      );
+
+      const left =
+        strip.x -
+        strip.width / 2;
+
+      const teeth =
+        Math.max(
+          1,
+          Math.round(
+            strip.width / TOOTH
+          )
+        );
+
+      const width =
+        strip.width / teeth;
+
+      for (
+        let i = 0;
+        i < teeth;
+        i++
+      ) {
+
+        const x0 =
+          left + i * width;
+
+        graphics.fillTriangle(
+          x0,
+          strip.y,
+          x0 + width,
+          strip.y,
+          x0 + width / 2,
+          strip.y - height
+        );
+
+        graphics.strokeTriangle(
+          x0,
+          strip.y,
+          x0 + width,
+          strip.y,
+          x0 + width / 2,
+          strip.y - height
+        );
+      }
+
+      graphics.setDepth(
+        3
+      );
+
+      this.hazardObjects.push(
+        graphics
+      );
+    }
   }
 
   // ========================================
@@ -869,6 +1053,7 @@ export class GameScene extends Phaser.Scene {
           id: string;
           x: number;
           y: number;
+          cause?: "fell" | "spikes";
         }
       ) => {
 
@@ -1265,6 +1450,15 @@ export class GameScene extends Phaser.Scene {
       data.crystals
     );
 
+    this.buildGround(
+      data.pits
+    );
+
+    this.buildSpikes(
+      data.spikes,
+      data.spikeHeight
+    );
+
     this.buildDoor(
       data.exit
     );
@@ -1515,6 +1709,7 @@ export class GameScene extends Phaser.Scene {
       id: string;
       x: number;
       y: number;
+      cause?: "fell" | "spikes";
     }
   ) {
 
@@ -1534,8 +1729,17 @@ export class GameScene extends Phaser.Scene {
       }
 
       this.showTemporaryMessage(
-        "RESPAWN!",
-        700
+        data.cause === "spikes"
+          ? "OUCH! SPIKES!"
+          : data.cause === "fell"
+            ? "YOU FELL!"
+            : "RESPAWN!",
+        800
+      );
+
+      this.cameras.main.shake(
+        140,
+        0.006
       );
 
       return;
@@ -1734,5 +1938,22 @@ export class GameScene extends Phaser.Scene {
     this.doorRect = null;
 
     this.doorLabel = null;
+
+    for (
+      const object
+      of [
+        ...this.groundObjects,
+        ...this.hazardObjects
+      ]
+    ) {
+
+      object.destroy();
+    }
+
+    this.groundObjects =
+      [];
+
+    this.hazardObjects =
+      [];
   }
 }
