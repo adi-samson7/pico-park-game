@@ -1,0 +1,19 @@
+{
+  "name": "pico-coop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pico Co-op: a browser-based multiplayer co-op platformer (Phaser + Colyseus).",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "install:all": "npm --prefix server ci && npm --prefix client ci",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "build": "npm --prefix client run build && npm --prefix server run build",
+    "start": "npm --prefix server start",
+    "typecheck": "npm --prefix client run typecheck && npm --prefix server run typecheck",
+    "test": "npm --prefix server test",
+    "test:e2e": "npm --prefix server run test:e2e"
+  }
+}

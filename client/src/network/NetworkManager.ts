@@ -3,20 +3,22 @@ import {
   Room
 } from "@colyseus/sdk";
 
+import {
+  SERVER_HTTP_URL,
+  SERVER_WS_URL
+} from "../config";
+
 export class NetworkManager {
 
   private client: Client;
 
   public room!: Room;
 
-  private lookupServer =
-    "http://localhost:3000";
-
   constructor() {
 
     this.client =
       new Client(
-        "ws://localhost:2567"
+        SERVER_WS_URL
       );
   }
 
@@ -75,7 +77,7 @@ export class NetworkManager {
 
     const response =
       await fetch(
-        `${this.lookupServer}/room/${code}`
+        `${SERVER_HTTP_URL}/room/${code}`
       );
 
     if (!response.ok) {

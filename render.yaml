@@ -1,0 +1,16 @@
+# Render blueprint: https://render.com/docs/blueprint-spec
+#
+# Deploys the Dockerfile as one web service. Render supplies PORT, terminates
+# TLS (the client automatically switches to wss://) and supports WebSockets.
+#
+# Run a SINGLE instance: rooms live in the server's memory (see README).
+
+services:
+  - type: web
+    name: pico-coop
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    numInstances: 1
+    healthCheckPath: /health
+    autoDeploy: true

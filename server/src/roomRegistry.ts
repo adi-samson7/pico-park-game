@@ -1,3 +1,5 @@
+import { log } from "./log.js";
+
 const roomRegistry =
   new Map<string, string>();
 
@@ -20,7 +22,7 @@ export function registerRoom(
     roomId
   );
 
-  console.log(
+  log(
     `[Registry] Registered ${code} -> ${roomId}`
   );
 }
@@ -43,7 +45,7 @@ export function findRoom(
       code
     );
 
-  console.log(
+  log(
     `[Registry] Lookup ${code} -> ${roomId ?? "NOT FOUND"}`
   );
 
@@ -82,7 +84,15 @@ export function removeRoom(
     code
   );
 
-  console.log(
+  log(
     `[Registry] Removed ${code}`
   );
+}
+// ==========================================
+// COUNT
+// ==========================================
+
+export function roomCount(): number {
+
+  return roomRegistry.size;
 }

@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            client/package-lock.json
+            server/package-lock.json
+
+      - name: Install
+        run: |
+          npm --prefix client ci
+          npm --prefix server ci
+
+      # `npm run build` in the client also typechecks it (tsc && vite build).
+      - name: Build client
+        run: npm --prefix client run build
+
+      - name: Typecheck server (src and tests)
+        run: npm --prefix server run typecheck
+
+      - name: Unit and integration tests
+        run: npm --prefix server test
+
+      - name: Build server
+        run: npm --prefix server run build
+
+      # Headless Chrome (preinstalled on ubuntu-latest) plays the production build.
+      - name: Browser end-to-end tests
+        env:
+          E2E_REQUIRE: "1"
+          CI: "true"
+        run: npm --prefix server run test:e2e
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t pico-coop .
+
+      - name: Start it and check /health and the client
+        run: |
+          docker run -d --name pico -p 2567:2567 pico-coop
+          for i in $(seq 1 30); do
+            curl -fsS http://localhost:2567/health && break
+            sleep 1
+          done
+          curl -fsS http://localhost:2567/health
+          curl -fsS http://localhost:2567/ | grep -qi "<title>PICO CO-OP</title>"
+          docker logs pico
+          docker rm -f pico

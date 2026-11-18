@@ -1,233 +1,79 @@
-import { Server } from "colyseus";
-import { WebSocketTransport } from "@colyseus/ws-transport";
-import { createServer } from "http";
+import { fileURLToPath } from "node:url";
 
-import { GameRoom } from "./rooms/GameRoom.js";
-
-import {
-  findRoom
-} from "./roomRegistry.js";
+import { createApp } from "./app.js";
 
 // ==========================================
-// COLYSEUS SERVER
+// CONFIGURATION (environment variables)
 // ==========================================
+//
+//   PORT          port to listen on        (2567)
+//   HOST          interface to bind to     (0.0.0.0)
+//   CLIENT_DIST   built client directory   (../../client/dist)
+//   CORS_ORIGIN   allowed origin for the
+//                 room lookup endpoint     (*)
 
-const gameServer =
-  new Server({
-    transport:
-      new WebSocketTransport()
-  });
-
-// ==========================================
-// REGISTER GAME ROOM
-// ==========================================
-
-gameServer.define(
-  "game",
-  GameRoom
-);
-
-// ==========================================
-// ROOM LOOKUP HTTP SERVER
-// ==========================================
-
-const lookupServer =
-  createServer(
-    (req, res) => {
-
-      // ======================================
-      // CORS
-      // ======================================
-
-      res.setHeader(
-        "Access-Control-Allow-Origin",
-        "*"
-      );
-
-      res.setHeader(
-        "Access-Control-Allow-Methods",
-        "GET, OPTIONS"
-      );
-
-      res.setHeader(
-        "Access-Control-Allow-Headers",
-        "Content-Type"
-      );
-
-      // ======================================
-      // OPTIONS
-      // ======================================
-
-      if (
-        req.method === "OPTIONS"
-      ) {
-
-        res.writeHead(
-          204
-        );
-
-        res.end();
-
-        return;
-      }
-
-      // ======================================
-      // ONLY GET
-      // ======================================
-
-      if (
-        req.method !== "GET"
-      ) {
-
-        res.writeHead(
-          405,
-          {
-            "Content-Type":
-              "application/json"
-          }
-        );
-
-        res.end(
-          JSON.stringify({
-            error:
-              "Method not allowed"
-          })
-        );
-
-        return;
-      }
-
-      // ======================================
-      // MATCH ROOM CODE
-      // ======================================
-
-      const match =
-        req.url?.match(
-          /^\/room\/([A-Za-z0-9]{6})$/
-        );
-
-      if (!match) {
-
-        res.writeHead(
-          404,
-          {
-            "Content-Type":
-              "application/json"
-          }
-        );
-
-        res.end(
-          JSON.stringify({
-            error:
-              "Invalid room code."
-          })
-        );
-
-        return;
-      }
-
-      const roomCode =
-        match[1]
-          .toUpperCase();
-
-      console.log(
-        `[Lookup] Searching for room: ${roomCode}`
-      );
-
-      // ======================================
-      // FIND ROOM IN REGISTRY
-      // ======================================
-
-      const roomId =
-        findRoom(
-          roomCode
-        );
-
-      if (!roomId) {
-
-        console.log(
-          `[Lookup] Room not found: ${roomCode}`
-        );
-
-        res.writeHead(
-          404,
-          {
-            "Content-Type":
-              "application/json"
-          }
-        );
-
-        res.end(
-          JSON.stringify({
-            error:
-              "Room not found"
-          })
-        );
-
-        return;
-      }
-
-      // ======================================
-      // RETURN ROOM
-      // ======================================
-
-      console.log(
-        `[Lookup] Room found: ${roomCode} -> ${roomId}`
-      );
-
-      res.writeHead(
-        200,
-        {
-          "Content-Type":
-            "application/json"
-        }
-      );
-
-      res.end(
-        JSON.stringify({
-
-          roomId,
-
-          roomCode
-        })
-      );
-    }
+const port =
+  Number(
+    process.env.PORT ?? 2567
   );
 
+const host =
+  process.env.HOST ??
+  "0.0.0.0";
+
+const staticDir =
+  process.env.CLIENT_DIST ??
+  fileURLToPath(
+    new URL(
+      "../../client/dist",
+      import.meta.url
+    )
+  );
+
+if (
+  !Number.isInteger(port) ||
+  port < 0 ||
+  port > 65535
+) {
+
+  console.error(
+    `Invalid PORT: ${process.env.PORT}`
+  );
+
+  process.exit(1);
+}
+
 // ==========================================
-// START COLYSEUS SERVER
+// START
 // ==========================================
 
-await gameServer.listen(
-  2567
+const app =
+  await createApp({
+    port,
+    host,
+    staticDir,
+    corsOrigin:
+      process.env.CORS_ORIGIN
+  });
+
+console.log(
+  "================================"
 );
 
-// ==========================================
-// START LOOKUP SERVER
-// ==========================================
+console.log(
+  "PICO CO-OP SERVER RUNNING"
+);
 
-lookupServer.listen(
-  3000,
-  () => {
+console.log(
+  `Game + lookup: http://${host}:${app.port}`
+);
 
-    console.log(
-      "================================"
-    );
+console.log(
+  app.servesClient
+    ? `Serving client from ${staticDir}`
+    : "Client not served (run `npm run dev` in client/ for development)"
+);
 
-    console.log(
-      "PICO CO-OP SERVERS RUNNING"
-    );
-
-    console.log(
-      "Game server: ws://localhost:2567"
-    );
-
-    console.log(
-      "Lookup server: http://localhost:3000"
-    );
-
-    console.log(
-      "================================"
-    );
-  }
+console.log(
+  "================================"
 );

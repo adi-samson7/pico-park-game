@@ -1,11 +1,23 @@
 import { Room, Client } from "colyseus";
 
+import { log } from "../log.js";
+
 import {
   registerRoom,
   findRoom,
   removeRoom,
   roomCodeExists
 } from "../roomRegistry.js";
+
+import {
+  EXIT_HEIGHT,
+  EXIT_REACH_Y,
+  EXIT_WIDTH,
+  LEVELS,
+  SPAWN_POSITIONS,
+  type LevelData,
+  type Platform
+} from "../levels.js";
 
 import {
   PHYSICS,
@@ -62,15 +74,6 @@ interface PlayerInput {
   jump?: boolean;
 }
 
-interface Platform {
-
-  x: number;
-  y: number;
-
-  width: number;
-  height: number;
-}
-
 interface Crystal {
 
   id: number;
@@ -79,33 +82,6 @@ interface Crystal {
   y: number;
 
   collected: boolean;
-}
-
-interface LevelData {
-
-  platforms: Platform[];
-
-  // Centre of the exit door. The door
-  // opens once every crystal is collected
-  // and the level ends when ALL players
-  // are standing in it.
-  exit: {
-    x: number;
-    y: number;
-  };
-
-  // Gaps in the ground. Falling in respawns
-  // the player at their spawn point.
-  pits: Pit[];
-
-  // Spike strips. Touching one respawns
-  // the player at their spawn point.
-  spikes: Spikes[];
-
-  crystals: {
-    x: number;
-    y: number;
-  }[];
 }
 
 // ==========================================
@@ -152,13 +128,9 @@ export class GameRoom extends Room {
     y: 0
   };
 
-  // Door box. It is wide enough for four
-  // (solid, 40px) players side by side:
-  // a player counts as inside when their
-  // centre is within the door's width.
-  private readonly EXIT_WIDTH = 140;
+  private readonly EXIT_WIDTH = EXIT_WIDTH;
 
-  private readonly EXIT_HEIGHT = 64;
+  private readonly EXIT_HEIGHT = EXIT_HEIGHT;
 
   // ========================================
   // INPUT
@@ -191,28 +163,8 @@ export class GameRoom extends Room {
   // SPAWN POSITIONS
   // ========================================
 
-  private spawnPositions = [
-
-    {
-      x: 180,
-      y: 300
-    },
-
-    {
-      x: 300,
-      y: 300
-    },
-
-    {
-      x: 420,
-      y: 300
-    },
-
-    {
-      x: 540,
-      y: 300
-    }
-  ];
+  private spawnPositions =
+    SPAWN_POSITIONS;
 
   // ========================================
   // COLORS
@@ -233,232 +185,8 @@ export class GameRoom extends Room {
   // LEVELS
   // ========================================
 
-  private levels: LevelData[] = [
-
-    // ======================================
-    // LEVEL 1
-    // ======================================
-
-    {
-      exit: { x: 250, y: 258 },
-
-      pits: [
-        { x1: 610, x2: 730 }
-      ],
-
-      spikes: [
-        { x: 235, y: 540, width: 70 }
-      ],
-
-      platforms: [
-
-        {
-          x: 100,
-          y: 450,
-          width: 180,
-          height: 20
-        },
-
-        {
-          x: 360,
-          y: 400,
-          width: 160,
-          height: 20
-        },
-
-        {
-          x: 600,
-          y: 450,
-          width: 150,
-          height: 20
-        },
-
-        {
-          x: 250,
-          y: 300,
-          width: 150,
-          height: 20
-        }
-      ],
-
-      crystals: [
-
-        { x: 120, y: 410 },
-        { x: 170, y: 410 },
-        { x: 220, y: 410 },
-
-        { x: 380, y: 360 },
-        { x: 430, y: 360 },
-        { x: 480, y: 360 },
-
-        { x: 620, y: 410 },
-        { x: 670, y: 410 },
-
-        { x: 280, y: 260 },
-        { x: 350, y: 260 },
-
-        // over the pit
-        { x: 640, y: 480 },
-        { x: 690, y: 480 },
-        { x: 765, y: 510 }
-      ]
-    },
-
-    // ======================================
-    // LEVEL 2
-    // ======================================
-
-    {
-      exit: { x: 470, y: 178 },
-
-      pits: [
-        { x1: 220, x2: 390 }
-      ],
-
-      spikes: [
-        { x: 480, y: 420, width: 40 },
-        { x: 660, y: 540, width: 80 }
-      ],
-
-      platforms: [
-
-        {
-          x: 80,
-          y: 430,
-          width: 140,
-          height: 20
-        },
-
-        {
-          x: 300,
-          y: 350,
-          width: 140,
-          height: 20
-        },
-
-        {
-          x: 520,
-          y: 430,
-          width: 160,
-          height: 20
-        },
-
-        {
-          x: 180,
-          y: 250,
-          width: 140,
-          height: 20
-        },
-
-        {
-          x: 470,
-          y: 220,
-          width: 150,
-          height: 20
-        }
-      ],
-
-      crystals: [
-
-        { x: 100, y: 390 },
-        { x: 150, y: 390 },
-
-        { x: 320, y: 310 },
-        { x: 370, y: 310 },
-
-        { x: 540, y: 390 },
-        { x: 590, y: 390 },
-
-        { x: 200, y: 210 },
-        { x: 250, y: 210 },
-
-        { x: 490, y: 180 },
-        { x: 550, y: 180 },
-
-        // over the pit
-        { x: 250, y: 490 },
-        { x: 305, y: 470 },
-        { x: 360, y: 490 }
-      ]
-    },
-
-    // ======================================
-    // LEVEL 3
-    // ======================================
-
-    {
-      exit: { x: 300, y: 178 },
-
-      pits: [
-        { x1: 215, x2: 385 }
-      ],
-
-      spikes: [
-        { x: 630, y: 540, width: 80 }
-      ],
-
-      platforms: [
-
-        {
-          x: 80,
-          y: 450,
-          width: 130,
-          height: 20
-        },
-
-        {
-          x: 260,
-          y: 380,
-          width: 120,
-          height: 20
-        },
-
-        {
-          x: 450,
-          y: 310,
-          width: 120,
-          height: 20
-        },
-
-        {
-          x: 620,
-          y: 400,
-          width: 120,
-          height: 20
-        },
-
-        {
-          x: 300,
-          y: 220,
-          width: 160,
-          height: 20
-        }
-      ],
-
-      crystals: [
-
-        { x: 100, y: 410 },
-        { x: 150, y: 410 },
-
-        { x: 280, y: 340 },
-        { x: 330, y: 340 },
-
-        { x: 470, y: 270 },
-        { x: 520, y: 270 },
-
-        { x: 640, y: 360 },
-        { x: 690, y: 360 },
-
-        { x: 330, y: 180 },
-        { x: 410, y: 180 },
-
-        // over the pit
-        { x: 270, y: 490 },
-        { x: 300, y: 470 },
-        { x: 330, y: 490 }
-      ]
-    }
-  ];
+  private levels: LevelData[] =
+    LEVELS;
 
   // ==========================================
   // CREATE ROOM
@@ -466,7 +194,7 @@ export class GameRoom extends Room {
 
   onCreate() {
 
-    console.log(
+    log(
       "Game room created:",
       this.roomId
     );
@@ -483,7 +211,7 @@ export class GameRoom extends Room {
       this.roomId
     );
 
-    console.log(
+    log(
       "Room code:",
       this.roomCode
     );
@@ -763,7 +491,7 @@ export class GameRoom extends Room {
     client: Client
   ) {
 
-    console.log(
+    log(
       "Player joined:",
       client.sessionId
     );
@@ -950,7 +678,7 @@ export class GameRoom extends Room {
     client: Client
   ) {
 
-    console.log(
+    log(
       "Player left:",
       client.sessionId
     );
@@ -1013,7 +741,7 @@ export class GameRoom extends Room {
 
   onDispose() {
 
-    console.log(
+    log(
       "Game room disposed:",
       this.roomId
     );
@@ -1281,7 +1009,7 @@ export class GameRoom extends Room {
         Math.abs(
           player.y -
           this.exit.y
-        ) < 36
+        ) < EXIT_REACH_Y
       ) {
 
         count++;
@@ -1382,7 +1110,7 @@ export class GameRoom extends Room {
     this.gameStarted =
       false;
 
-    console.log(
+    log(
       "GAME FINISHED - PLAYERS WIN"
     );
 
@@ -1434,7 +1162,7 @@ export class GameRoom extends Room {
       );
     }
 
-    console.log(
+    log(
       "GAME STARTED"
     );
 
@@ -1522,7 +1250,7 @@ export class GameRoom extends Room {
       }
     );
 
-    console.log(
+    log(
       `Loaded level ${levelNumber}`
     );
   }

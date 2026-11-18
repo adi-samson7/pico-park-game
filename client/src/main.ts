@@ -45,10 +45,17 @@ const game =
     config
   );
 
-// Debug hooks for automated browser tests
-// (dev server only, never in a build).
+// Debug hooks for automated browser tests:
+// always in the dev server, and in a
+// production build only when the page is
+// opened with ?debug.
 
-if (import.meta.env.DEV) {
+if (
+  import.meta.env.DEV ||
+  new URLSearchParams(
+    window.location.search
+  ).has("debug")
+) {
 
   Object.assign(
     window,
