@@ -22,6 +22,9 @@ interface PlayerData {
   velocityY?: number;
 
   alive?: boolean;
+
+  jumpCount?: number;
+  grounded?: boolean;
 }
 
 interface PlatformData {
@@ -43,13 +46,35 @@ interface CrystalData {
   collected: boolean;
 }
 
-interface GameState {
+// Sent once per level (and on request).
+interface LevelData {
 
-  players: PlayerData[];
+  level: number;
+
+  maxLevels: number;
+
+  targetScore: number;
+
+  score: number;
+
+  platforms: PlatformData[];
 
   crystals: CrystalData[];
 
-  platforms: PlatformData[];
+  exit: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+
+  doorOpen: boolean;
+}
+
+// Sent every server tick.
+interface GameState {
+
+  players: PlayerData[];
 
   score: number;
 
@@ -62,6 +87,10 @@ interface GameState {
   gameStarted: boolean;
 
   gameFinished: boolean;
+
+  doorOpen: boolean;
+
+  playersAtExit: number;
 }
 
 // ==========================================
@@ -112,6 +141,12 @@ export class GameScene extends Phaser.Scene {
 
     W:
       Phaser.Input.Keyboard.Key;
+
+    SPACE:
+      Phaser.Input.Keyboard.Key;
+
+    ENTER:
+      Phaser.Input.Keyboard.Key;
   };
 
   // ========================================
@@ -152,6 +187,43 @@ export class GameScene extends Phaser.Scene {
   private messageText!:
     Phaser.GameObjects.Text;
 
+  private hintText!:
+    Phaser.GameObjects.Text;
+
+  private objectiveText!:
+    Phaser.GameObjects.Text;
+
+  // Exit door (rebuilt for every level).
+  private doorRect:
+    Phaser.GameObjects.Rectangle | null =
+    null;
+
+  private doorLabel:
+    Phaser.GameObjects.Text | null =
+    null;
+
+  private doorOpen = false;
+
+  private youMarker!:
+    Phaser.GameObjects.Text;
+
+  // One coloured chip per connected player.
+  private playerChips:
+    Phaser.GameObjects.Rectangle[] =
+    [];
+
+  private chipSignature = "";
+
+  // ========================================
+  // LEVEL / STATE
+  // ========================================
+
+  private targetScore = 10;
+
+  private gameFinished = false;
+
+  private leaving = false;
+
   // ========================================
   // INIT
   // ========================================
@@ -182,6 +254,23 @@ export class GameScene extends Phaser.Scene {
       "GameScene received:",
       data
     );
+
+    // The scene instance is reused between
+    // games, so start from a clean slate.
+
+    this.localPlayer = null;
+    this.remotePlayers = new Map();
+    this.playerData = new Map();
+    this.platformObjects = [];
+    this.crystalSprites = new Map();
+    this.playerChips = [];
+    this.chipSignature = "";
+    this.targetScore = 10;
+    this.gameFinished = false;
+    this.leaving = false;
+    this.doorRect = null;
+    this.doorLabel = null;
+    this.doorOpen = false;
 
     if (
       data.room
@@ -249,6 +338,20 @@ export class GameScene extends Phaser.Scene {
 
     this.setupNetwork();
 
+    this.events.once(
+      Phaser.Scenes.Events.SHUTDOWN,
+      this.shutdown,
+      this
+    );
+
+    // Level geometry is not part of the
+    // per-tick state: ask for it now that
+    // our listeners exist.
+
+    this.room.send(
+      "requestLevel"
+    );
+
     console.log(
       "GameScene started."
     );
@@ -278,6 +381,16 @@ export class GameScene extends Phaser.Scene {
       W:
         this.input.keyboard!.addKey(
           Phaser.Input.Keyboard.KeyCodes.W
+        ),
+
+      SPACE:
+        this.input.keyboard!.addKey(
+          Phaser.Input.Keyboard.KeyCodes.SPACE
+        ),
+
+      ENTER:
+        this.input.keyboard!.addKey(
+          Phaser.Input.Keyboard.KeyCodes.ENTER
         )
     };
   }
@@ -313,6 +426,23 @@ export class GameScene extends Phaser.Scene {
 
           color:
             "#ffffff"
+        }
+      ).setOrigin(
+        0.5,
+        0
+      );
+
+    this.objectiveText =
+      this.add.text(
+        400,
+        50,
+        "Collect all the crystals",
+        {
+          fontSize:
+            "16px",
+
+          color:
+            "#ffdd66"
         }
       ).setOrigin(
         0.5,
@@ -363,6 +493,51 @@ export class GameScene extends Phaser.Scene {
 
     this.messageText.setDepth(
       100
+    );
+
+    this.hintText =
+      this.add.text(
+        400,
+        572,
+        "A / D or ← / → move   |   SPACE jump (press again in the air to double jump)   |   stand on each other!",
+        {
+          fontSize:
+            "13px",
+
+          color:
+            "#999999"
+        }
+      ).setOrigin(
+        0.5
+      );
+
+    this.hintText.setDepth(
+      50
+    );
+
+    this.youMarker =
+      this.add.text(
+        0,
+        0,
+        "▼ YOU",
+        {
+          fontSize:
+            "12px",
+
+          color:
+            "#ffffff"
+        }
+      ).setOrigin(
+        0.5,
+        1
+      );
+
+    this.youMarker.setDepth(
+      20
+    );
+
+    this.youMarker.setVisible(
+      false
     );
   }
 
@@ -619,7 +794,44 @@ export class GameScene extends Phaser.Scene {
         this.scoreText.setText(
           `Crystals: ${
             data.score
-          } / 10`
+          } / ${
+            this.targetScore
+          }`
+        );
+      }
+    );
+
+    // --------------------------------------
+    // DOOR OPENED
+    // --------------------------------------
+
+    this.room.onMessage(
+      "doorOpened",
+      () => {
+
+        this.setDoorOpen(
+          true
+        );
+
+        this.showTemporaryMessage(
+          "EXIT OPEN!\nEveryone get to the door",
+          1600
+        );
+      }
+    );
+
+    // --------------------------------------
+    // LEVEL LOADED (geometry + crystals)
+    // --------------------------------------
+
+    this.room.onMessage(
+      "levelLoaded",
+      (
+        data: LevelData
+      ) => {
+
+        this.applyLevel(
+          data
         );
       }
     );
@@ -674,8 +886,11 @@ export class GameScene extends Phaser.Scene {
       "gameFinished",
       () => {
 
+        this.gameFinished =
+          true;
+
         this.messageText.setText(
-          "YOU WIN!\n\nALL LEVELS COMPLETE"
+          "YOU WIN!\n\nALL LEVELS COMPLETE\n\nPress ENTER to return to the menu"
         );
 
         this.statusText.setText(
@@ -740,7 +955,47 @@ export class GameScene extends Phaser.Scene {
         this.playerData.delete(
           data.id
         );
+
+        this.updatePlayerHud();
       }
+    );
+
+    // --------------------------------------
+    // CONNECTION LOST
+    // --------------------------------------
+
+    this.room.onLeave(
+      () => {
+
+        this.returnToMenu(
+          false
+        );
+      }
+    );
+  }
+
+  // ========================================
+  // RETURN TO MENU
+  // ========================================
+
+  private returnToMenu(
+    leaveRoom: boolean
+  ) {
+
+    if (this.leaving) {
+      return;
+    }
+
+    this.leaving = true;
+
+    if (leaveRoom) {
+
+      this.room.leave()
+        .catch(() => {});
+    }
+
+    this.scene.start(
+      "MenuScene"
     );
   }
 
@@ -751,6 +1006,9 @@ export class GameScene extends Phaser.Scene {
   private updateGameState(
     state: GameState
   ) {
+
+    this.targetScore =
+      state.targetScore;
 
     this.scoreText.setText(
       `Crystals: ${
@@ -849,20 +1107,259 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // --------------------------------------
-    // PLATFORMS
-    // --------------------------------------
+    if (
+      state.doorOpen &&
+      this.doorLabel
+    ) {
 
-    this.updatePlatforms(
-      state.platforms
+      this.doorLabel.setText(
+        `EXIT ${
+          state.playersAtExit
+        }/${
+          state.players.length
+        }`
+      );
+    }
+
+    this.updatePlayerHud();
+  }
+
+  // ========================================
+  // EXIT DOOR
+  // ========================================
+
+  private buildDoor(
+    exit: LevelData["exit"]
+  ) {
+
+    this.doorRect?.destroy();
+
+    this.doorLabel?.destroy();
+
+    this.doorRect =
+      this.add.rectangle(
+        exit.x,
+        exit.y,
+        exit.width,
+        exit.height,
+        0x552222
+      );
+
+    this.doorRect.setStrokeStyle(
+      3,
+      0xff6666
     );
 
-    // --------------------------------------
-    // CRYSTALS
-    // --------------------------------------
+    this.doorRect.setDepth(
+      0.5
+    );
+
+    this.doorLabel =
+      this.add.text(
+        exit.x,
+        exit.y -
+          exit.height / 2 -
+          6,
+        "LOCKED",
+        {
+          fontSize:
+            "14px",
+
+          color:
+            "#ff9999"
+        }
+      ).setOrigin(
+        0.5,
+        1
+      );
+
+    this.doorLabel.setDepth(
+      0.5
+    );
+  }
+
+  private setDoorOpen(
+    open: boolean
+  ) {
+
+    this.doorOpen =
+      open;
+
+    this.doorRect?.setFillStyle(
+      open
+        ? 0x226633
+        : 0x552222
+    );
+
+    this.doorRect?.setStrokeStyle(
+      3,
+      open
+        ? 0x66ff88
+        : 0xff6666
+    );
+
+    this.doorLabel?.setText(
+      open
+        ? "EXIT"
+        : "LOCKED"
+    );
+
+    this.doorLabel?.setColor(
+      open
+        ? "#88ffaa"
+        : "#ff9999"
+    );
+
+    this.objectiveText.setText(
+      open
+        ? "Everyone to the exit door!"
+        : "Collect all the crystals"
+    );
+  }
+
+  // ========================================
+  // LEVEL
+  // ========================================
+
+  private applyLevel(
+    data: LevelData
+  ) {
+
+    this.targetScore =
+      data.targetScore;
+
+    this.levelText.setText(
+      `LEVEL ${
+        data.level
+      } / ${
+        data.maxLevels
+      }`
+    );
+
+    this.scoreText.setText(
+      `Crystals: ${
+        data.score
+      } / ${
+        data.targetScore
+      }`
+    );
+
+    // Drop the previous level's crystals
+    // immediately (no collect animation).
+
+    for (
+      const crystal
+      of this.crystalSprites.values()
+    ) {
+
+      crystal.destroy();
+    }
+
+    this.crystalSprites.clear();
+
+    this.updatePlatforms(
+      data.platforms
+    );
 
     this.updateCrystals(
-      state.crystals
+      data.crystals
+    );
+
+    this.buildDoor(
+      data.exit
+    );
+
+    this.setDoorOpen(
+      data.doorOpen
+    );
+  }
+
+  // ========================================
+  // PLAYER HUD
+  // ========================================
+
+  private updatePlayerHud() {
+
+    const players =
+      Array.from(
+        this.playerData.values()
+      ).sort(
+        (a, b) =>
+          a.playerIndex -
+          b.playerIndex
+      );
+
+    // Only rebuild when the roster changes.
+
+    const signature =
+      players.map(
+        player =>
+          player.id
+      ).join(
+        ","
+      );
+
+    if (
+      signature ===
+      this.chipSignature
+    ) {
+      return;
+    }
+
+    this.chipSignature =
+      signature;
+
+    for (
+      const chip
+      of this.playerChips
+    ) {
+
+      chip.destroy();
+    }
+
+    this.playerChips =
+      [];
+
+    this.statusText.setText(
+      `PLAYERS ${
+        players.length
+      } / 4`
+    );
+
+    players.forEach(
+      (player, index) => {
+
+        const chip =
+          this.add.rectangle(
+            780 - index * 24,
+            54,
+            16,
+            16,
+            player.color
+          ).setOrigin(
+            1,
+            0
+          );
+
+        if (
+          player.id ===
+          this.room.sessionId
+        ) {
+
+          chip.setStrokeStyle(
+            2,
+            0xffffff
+          );
+        }
+
+        chip.setDepth(
+          10
+        );
+
+        this.playerChips.push(
+          chip
+        );
+      }
     );
   }
 
@@ -1132,11 +1629,39 @@ export class GameScene extends Phaser.Scene {
 
     const jump =
       Phaser.Input.Keyboard.JustDown(
+        this.keys.SPACE
+      ) ||
+      Phaser.Input.Keyboard.JustDown(
         this.cursors.up
       ) ||
       Phaser.Input.Keyboard.JustDown(
         this.keys.W
       );
+
+    this.youMarker.setPosition(
+      this.localPlayer.x,
+      this.localPlayer.y - 36
+    );
+
+    this.youMarker.setVisible(
+      true
+    );
+
+    if (this.gameFinished) {
+
+      if (
+        Phaser.Input.Keyboard.JustDown(
+          this.keys.ENTER
+        )
+      ) {
+
+        this.returnToMenu(
+          true
+        );
+      }
+
+      return;
+    }
 
     this.room.send(
       "input",
@@ -1190,5 +1715,24 @@ export class GameScene extends Phaser.Scene {
 
     this.platformObjects =
       [];
+
+    for (
+      const chip
+      of this.playerChips
+    ) {
+
+      chip.destroy();
+    }
+
+    this.playerChips =
+      [];
+
+    this.doorRect?.destroy();
+
+    this.doorLabel?.destroy();
+
+    this.doorRect = null;
+
+    this.doorLabel = null;
   }
 }

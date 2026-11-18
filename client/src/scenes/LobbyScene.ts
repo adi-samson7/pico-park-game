@@ -20,6 +20,9 @@ export class LobbyScene extends Phaser.Scene {
 
   private roomCode = "";
 
+  // Session id of the host (set by the server).
+  private hostId = "";
+
   private players: Map<string, PlayerData> =
     new Map();
 
@@ -447,23 +450,61 @@ export class LobbyScene extends Phaser.Scene {
     );
 
     // ----------------------------------------
-    // START GAME ERROR
+    // HOST CHANGED
     // ----------------------------------------
 
     this.room.onMessage(
-      "startGameError",
+      "hostChanged",
       (data: {
-        message: string;
+        id: string;
+      }) => {
+
+        this.hostId =
+          data.id;
+
+        this.updatePlayerList();
+        this.updateStartButton();
+      }
+    );
+
+    // ----------------------------------------
+    // START GAME FAILED
+    // ----------------------------------------
+
+    this.room.onMessage(
+      "startGameFailed",
+      (data: {
+        reason: string;
       }) => {
 
         console.log(
-          "Start game error:",
-          data.message
+          "Start game failed:",
+          data.reason
         );
 
         this.errorText.setText(
-          data.message
+          data.reason
         );
+      }
+    );
+
+    // ----------------------------------------
+    // DISCONNECTED FROM SERVER
+    // ----------------------------------------
+
+    this.room.onLeave(
+      () => {
+
+        if (
+          this.scene.isActive(
+            "LobbyScene"
+          )
+        ) {
+
+          this.scene.start(
+            "MenuScene"
+          );
+        }
       }
     );
   }
@@ -520,7 +561,7 @@ export class LobbyScene extends Phaser.Scene {
           : "#aaaaaa";
 
       const isHost =
-        player.playerIndex === 0;
+        player.id === this.hostId;
 
       const isMe =
         player.id ===
@@ -639,11 +680,17 @@ export class LobbyScene extends Phaser.Scene {
       return;
     }
 
-    // Only host has START button.
+    // Only the host sees the START button.
 
-    if (
-      this.mode !== "create"
-    ) {
+    const isHost =
+      this.room?.sessionId ===
+        this.hostId;
+
+    this.startButton.setVisible(
+      isHost
+    );
+
+    if (!isHost) {
       return;
     }
 
@@ -768,9 +815,7 @@ export class LobbyScene extends Phaser.Scene {
     // START BUTTON
     // ----------------------------------------
 
-    if (
-      this.mode === "create"
-    ) {
+    {
 
       this.startButton =
         this.add.text(

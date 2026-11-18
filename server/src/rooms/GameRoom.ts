@@ -3,8 +3,15 @@ import { Room, Client } from "colyseus";
 import {
   registerRoom,
   findRoom,
-  removeRoom
+  removeRoom,
+  roomCodeExists
 } from "../roomRegistry.js";
+
+import {
+  PHYSICS,
+  stepPlayers,
+  tryJump
+} from "../physics.js";
 
 // ==========================================
 // TYPES
@@ -32,6 +39,15 @@ interface Player {
   // 1 = first jump used
   // 2 = second jump used
   jumpCount: number;
+
+  // Resting on ground / platform / player.
+  grounded: boolean;
+
+  // Session id of the player below, if any.
+  standingOn: string | null;
+
+  // Timestamp of the last input message.
+  lastInputAt: number;
 }
 
 interface PlayerInput {
@@ -65,6 +81,15 @@ interface Crystal {
 interface LevelData {
 
   platforms: Platform[];
+
+  // Centre of the exit door. The door
+  // opens once every crystal is collected
+  // and the level ends when ALL players
+  // are standing in it.
+  exit: {
+    x: number;
+    y: number;
+  };
 
   crystals: {
     x: number;
@@ -100,29 +125,41 @@ export class GameRoom extends Room {
 
   private readonly MAX_LEVELS = 3;
 
-  private readonly CRYSTALS_PER_LEVEL = 10;
+  // Crystals needed to open the exit
+  // (set from the level data).
+  private targetScore = 10;
+
+  private doorOpen = false;
+
+  private exit = {
+    x: 0,
+    y: 0
+  };
+
+  // Door box. It is wide enough for four
+  // (solid, 40px) players side by side:
+  // a player counts as inside when their
+  // centre is within the door's width.
+  private readonly EXIT_WIDTH = 140;
+
+  private readonly EXIT_HEIGHT = 64;
 
   // ========================================
-  // PHYSICS
+  // INPUT
   // ========================================
 
-  private readonly MOVE_SPEED = 220;
+  // The client sends input every frame. If
+  // nothing arrives for this long, the
+  // player stops moving.
+  private readonly INPUT_TIMEOUT_MS = 300;
 
-  private readonly JUMP_SPEED = -500;
+  // ========================================
+  // HOST
+  // ========================================
 
-  private readonly GRAVITY = 1200;
-
-  private readonly MAX_JUMPS = 2;
-
-  private readonly GROUND_TOP = 540;
-
-  private readonly PLAYER_WIDTH = 40;
-
-  private readonly PLAYER_HEIGHT = 60;
-
-  private readonly WORLD_WIDTH = 800;
-
-  private readonly WORLD_HEIGHT = 600;
+  // Session id of the player allowed to
+  // start the game.
+  private hostId = "";
 
   // ========================================
   // LEVEL DATA
@@ -187,6 +224,8 @@ export class GameRoom extends Room {
     // ======================================
 
     {
+      exit: { x: 250, y: 258 },
+
       platforms: [
 
         {
@@ -241,6 +280,8 @@ export class GameRoom extends Room {
     // ======================================
 
     {
+      exit: { x: 470, y: 178 },
+
       platforms: [
 
         {
@@ -303,6 +344,8 @@ export class GameRoom extends Room {
     // ======================================
 
     {
+      exit: { x: 300, y: 178 },
+
       platforms: [
 
         {
@@ -415,6 +458,15 @@ export class GameRoom extends Room {
           return;
         }
 
+        // Never trust the payload shape.
+
+        if (
+          !message ||
+          typeof message !== "object"
+        ) {
+          return;
+        }
+
         if (
           !this.gameStarted ||
           this.gameFinished ||
@@ -423,19 +475,24 @@ export class GameRoom extends Room {
           return;
         }
 
+        player.lastInputAt =
+          Date.now();
+
         // ------------------------------------
         // HORIZONTAL MOVEMENT
         // ------------------------------------
 
-        if (message.left) {
+        if (message.left === true) {
 
           player.velocityX =
-            -this.MOVE_SPEED;
+            -PHYSICS.MOVE_SPEED;
 
-        } else if (message.right) {
+        } else if (
+          message.right === true
+        ) {
 
           player.velocityX =
-            this.MOVE_SPEED;
+            PHYSICS.MOVE_SPEED;
 
         } else {
 
@@ -446,26 +503,9 @@ export class GameRoom extends Room {
         // DOUBLE JUMP
         // ------------------------------------
 
-        if (
-          message.jump &&
-          player.jumpCount <
-            this.MAX_JUMPS
-        ) {
+        if (message.jump === true) {
 
-          player.velocityY =
-            this.JUMP_SPEED;
-
-          player.jumpCount++;
-
-          console.log(
-            `Player ${
-              player.playerIndex + 1
-            } jump ${
-              player.jumpCount
-            } / ${
-              this.MAX_JUMPS
-            }`
-          );
+          tryJump(player);
         }
       }
     );
@@ -587,7 +627,14 @@ export class GameRoom extends Room {
 
         // Only host
         if (
-          player.playerIndex !== 0
+          player.id !== this.hostId
+        ) {
+          return;
+        }
+
+        if (
+          this.gameStarted ||
+          this.gameFinished
         ) {
           return;
         }
@@ -608,6 +655,26 @@ export class GameRoom extends Room {
         }
 
         this.startGame();
+      }
+    );
+
+    // ========================================
+    // REQUEST LEVEL
+    // ========================================
+    //
+    // Level geometry is sent once, not every
+    // tick. A client asks for it when its
+    // game scene is ready (the broadcast at
+    // level load can arrive before that).
+
+    this.onMessage(
+      "requestLevel",
+      (client) => {
+
+        client.send(
+          "levelLoaded",
+          this.levelPayload()
+        );
       }
     );
 
@@ -702,13 +769,30 @@ export class GameRoom extends Room {
         true,
 
       jumpCount:
-        0
+        0,
+
+      grounded:
+        false,
+
+      standingOn:
+        null,
+
+      lastInputAt:
+        Date.now()
     };
 
     this.players.set(
       client.sessionId,
       player
     );
+
+    // First player in becomes host.
+
+    if (!this.hostId) {
+
+      this.hostId =
+        client.sessionId;
+    }
 
     // ----------------------------------------
     // OWN PLAYER
@@ -787,6 +871,18 @@ export class GameRoom extends Room {
       );
     }
 
+    // ----------------------------------------
+    // HOST
+    // ----------------------------------------
+
+    client.send(
+      "hostChanged",
+      {
+        id:
+          this.hostId
+      }
+    );
+
     this.checkAllPlayersReady();
   }
 
@@ -814,6 +910,43 @@ export class GameRoom extends Room {
           client.sessionId
       }
     );
+
+    // ----------------------------------------
+    // HOST MIGRATION
+    // ----------------------------------------
+    //
+    // If the host leaves, the player with
+    // the lowest index takes over so the
+    // lobby can never get stuck.
+
+    if (
+      client.sessionId ===
+      this.hostId
+    ) {
+
+      const next =
+        Array.from(
+          this.players.values()
+        ).sort(
+          (a, b) =>
+            a.playerIndex -
+            b.playerIndex
+        )[0];
+
+      this.hostId =
+        next?.id ?? "";
+
+      if (next) {
+
+        this.broadcast(
+          "hostChanged",
+          {
+            id:
+              next.id
+          }
+        );
+      }
+    }
 
     this.checkAllPlayersReady();
   }
@@ -845,460 +978,61 @@ export class GameRoom extends Room {
     deltaTime: number
   ) {
 
-    const dt =
-      Math.min(
-        deltaTime / 1000,
-        0.05
-      );
+    const now =
+      Date.now();
 
-    const oldY =
-      new Map<string, number>();
-
-    // ----------------------------------------
-    // SAVE OLD POSITIONS
-    // ----------------------------------------
+    // A client that stops sending input
+    // (closed laptop, hidden tab) must not
+    // keep running in its last direction.
 
     for (
       const player
       of this.players.values()
     ) {
 
-      oldY.set(
-        player.id,
-        player.y
-      );
+      if (
+        now - player.lastInputAt >
+        this.INPUT_TIMEOUT_MS
+      ) {
+
+        player.velocityX = 0;
+      }
     }
 
-    // ----------------------------------------
-    // UPDATE PLAYERS
-    // ----------------------------------------
-
-    for (
-      const player
-      of this.players.values()
-    ) {
-
-      this.updatePlayer(
-        player,
-        dt
+    const fallen =
+      stepPlayers(
+        Array.from(
+          this.players.values()
+        ),
+        this.platforms,
+        deltaTime / 1000
       );
+
+    for (const id of fallen) {
+
+      const player =
+        this.players.get(id);
+
+      if (player) {
+
+        this.respawnPlayer(
+          player
+        );
+      }
     }
-
-    // ----------------------------------------
-    // PLAYER-ON-PLAYER COLLISION
-    // ----------------------------------------
-
-    this.resolvePlayerCollisions(
-      oldY
-    );
-
-    // ----------------------------------------
-    // CRYSTALS
-    // ----------------------------------------
 
     this.checkCrystalCollection();
 
-    // ----------------------------------------
-    // STATE
-    // ----------------------------------------
+    this.checkExit();
 
     this.broadcastGameState();
   }
 
   // ==========================================
-  // UPDATE PLAYER
+  // PLACE AT SPAWN
   // ==========================================
 
-  private updatePlayer(
-    player: Player,
-    dt: number
-  ) {
-
-    if (!player.alive) {
-      return;
-    }
-
-    // ----------------------------------------
-    // HORIZONTAL
-    // ----------------------------------------
-
-    player.x +=
-      player.velocityX *
-      dt;
-
-    const halfWidth =
-      this.PLAYER_WIDTH / 2;
-
-    player.x =
-      Math.max(
-        halfWidth,
-        Math.min(
-          this.WORLD_WIDTH -
-            halfWidth,
-          player.x
-        )
-      );
-
-    // ----------------------------------------
-    // GRAVITY
-    // ----------------------------------------
-
-    player.velocityY +=
-      this.GRAVITY *
-      dt;
-
-    player.y +=
-      player.velocityY *
-      dt;
-
-    // ----------------------------------------
-    // GROUND
-    // ----------------------------------------
-
-    const groundY =
-      this.GROUND_TOP -
-      this.PLAYER_HEIGHT / 2;
-
-    if (
-      player.y >= groundY
-    ) {
-
-      player.y =
-        groundY;
-
-      player.velocityY =
-        0;
-
-      player.jumpCount =
-        0;
-    }
-
-    // ----------------------------------------
-    // PLATFORMS
-    // ----------------------------------------
-
-    for (
-      const platform
-      of this.platforms
-    ) {
-
-      const playerBottom =
-        player.y +
-        this.PLAYER_HEIGHT / 2;
-
-      const playerLeft =
-        player.x -
-        this.PLAYER_WIDTH / 2;
-
-      const playerRight =
-        player.x +
-        this.PLAYER_WIDTH / 2;
-
-      const platformLeft =
-        platform.x -
-        platform.width / 2;
-
-      const platformRight =
-        platform.x +
-        platform.width / 2;
-
-      const platformTop =
-        platform.y -
-        platform.height / 2;
-
-      const horizontalOverlap =
-        playerRight >
-          platformLeft &&
-        playerLeft <
-          platformRight;
-
-      if (
-        player.velocityY >= 0 &&
-        horizontalOverlap &&
-        playerBottom >= platformTop &&
-        playerBottom <=
-          platformTop + 20
-      ) {
-
-        player.y =
-          platformTop -
-          this.PLAYER_HEIGHT / 2;
-
-        player.velocityY =
-          0;
-
-        player.jumpCount =
-          0;
-      }
-    }
-
-    // ----------------------------------------
-    // FALL / RESPAWN
-    // ----------------------------------------
-
-    if (
-      player.y >
-      this.WORLD_HEIGHT + 100
-    ) {
-
-      this.respawnPlayer(
-        player
-      );
-    }
-  }
-
-  // ==========================================
-  // PLAYER COLLISION
-  // ==========================================
-
-  private resolvePlayerCollisions(
-    oldY: Map<string, number>
-  ) {
-
-    const players =
-      Array.from(
-        this.players.values()
-      );
-
-    // A couple of passes allow stacked
-    // players to settle correctly.
-
-    for (
-      let pass = 0;
-      pass < 3;
-      pass++
-    ) {
-
-      for (
-        let i = 0;
-        i < players.length;
-        i++
-      ) {
-
-        for (
-          let j = i + 1;
-          j < players.length;
-          j++
-        ) {
-
-          const a =
-            players[i];
-
-          const b =
-            players[j];
-
-          if (
-            !a.alive ||
-            !b.alive
-          ) {
-            continue;
-          }
-
-          this.resolvePlayerLanding(
-            a,
-            b,
-            oldY
-          );
-
-          this.resolvePlayerLanding(
-            b,
-            a,
-            oldY
-          );
-        }
-      }
-    }
-  }
-
-  // ==========================================
-  // PLAYER LANDING
-  // ==========================================
-
-  private resolvePlayerLanding(
-    fallingPlayer: Player,
-    supportPlayer: Player,
-    oldY: Map<string, number>
-  ) {
-
-    const horizontalOverlap =
-      Math.abs(
-        fallingPlayer.x -
-        supportPlayer.x
-      ) <
-      (
-        this.PLAYER_WIDTH
-      );
-
-    if (!horizontalOverlap) {
-      return;
-    }
-
-    const supportTop =
-      supportPlayer.y -
-      this.PLAYER_HEIGHT / 2;
-
-    const fallingBottom =
-      fallingPlayer.y +
-      this.PLAYER_HEIGHT / 2;
-
-    const oldBottom =
-      (
-        oldY.get(
-          fallingPlayer.id
-        ) ??
-        fallingPlayer.y
-      ) +
-      this.PLAYER_HEIGHT / 2;
-
-    // The falling player must have been
-    // above the other player during the
-    // previous frame.
-
-    const crossedFromAbove =
-      oldBottom <=
-        supportTop + 4 &&
-      fallingBottom >=
-        supportTop;
-
-    if (
-      fallingPlayer.velocityY >= 0 &&
-      crossedFromAbove
-    ) {
-
-      fallingPlayer.y =
-        supportTop -
-        this.PLAYER_HEIGHT / 2;
-
-      fallingPlayer.velocityY =
-        0;
-
-      fallingPlayer.jumpCount =
-        0;
-    }
-  }
-
-  // ==========================================
-  // GROUND / SURFACE CHECK
-  // ==========================================
-
-  private isOnGround(
-    player: Player
-  ): boolean {
-
-    const groundY =
-      this.GROUND_TOP -
-      this.PLAYER_HEIGHT / 2;
-
-    if (
-      Math.abs(
-        player.y -
-        groundY
-      ) < 5
-    ) {
-
-      return true;
-    }
-
-    // ----------------------------------------
-    // PLATFORMS
-    // ----------------------------------------
-
-    for (
-      const platform
-      of this.platforms
-    ) {
-
-      const platformTop =
-        platform.y -
-        platform.height / 2;
-
-      const playerBottom =
-        player.y +
-        this.PLAYER_HEIGHT / 2;
-
-      const playerLeft =
-        player.x -
-        this.PLAYER_WIDTH / 2;
-
-      const playerRight =
-        player.x +
-        this.PLAYER_WIDTH / 2;
-
-      const platformLeft =
-        platform.x -
-        platform.width / 2;
-
-      const platformRight =
-        platform.x +
-        platform.width / 2;
-
-      if (
-        Math.abs(
-          playerBottom -
-          platformTop
-        ) < 6 &&
-        playerRight >
-          platformLeft &&
-        playerLeft <
-          platformRight
-      ) {
-
-        return true;
-      }
-    }
-
-    // ----------------------------------------
-    // OTHER PLAYER
-    // ----------------------------------------
-
-    for (
-      const other
-      of this.players.values()
-    ) {
-
-      if (
-        other.id ===
-        player.id ||
-        !other.alive
-      ) {
-        continue;
-      }
-
-      const otherTop =
-        other.y -
-        this.PLAYER_HEIGHT / 2;
-
-      const playerBottom =
-        player.y +
-        this.PLAYER_HEIGHT / 2;
-
-      const horizontalOverlap =
-        Math.abs(
-          player.x -
-          other.x
-        ) <
-        this.PLAYER_WIDTH;
-
-      if (
-        Math.abs(
-          playerBottom -
-          otherTop
-        ) < 6 &&
-        horizontalOverlap
-      ) {
-
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  // ==========================================
-  // RESPAWN
-  // ==========================================
-
-  private respawnPlayer(
+  private placeAtSpawn(
     player: Player
   ) {
 
@@ -1322,8 +1056,27 @@ export class GameRoom extends Room {
     player.jumpCount =
       0;
 
+    player.grounded =
+      false;
+
+    player.standingOn =
+      null;
+
     player.alive =
       true;
+  }
+
+  // ==========================================
+  // RESPAWN
+  // ==========================================
+
+  private respawnPlayer(
+    player: Player
+  ) {
+
+    this.placeAtSpawn(
+      player
+    );
 
     this.broadcast(
       "playerRespawned",
@@ -1404,16 +1157,77 @@ export class GameRoom extends Room {
           );
 
           if (
+            !this.doorOpen &&
             this.score >=
-            this.CRYSTALS_PER_LEVEL
+              this.targetScore
           ) {
 
-            this.completeLevel();
+            this.doorOpen =
+              true;
 
-            return;
+            this.broadcast(
+              "doorOpened"
+            );
           }
         }
       }
+    }
+  }
+
+  // ==========================================
+  // EXIT DOOR
+  // ==========================================
+
+  private playersAtExit():
+    number {
+
+    let count = 0;
+
+    for (
+      const player
+      of this.players.values()
+    ) {
+
+      if (!player.alive) {
+        continue;
+      }
+
+      if (
+        Math.abs(
+          player.x -
+          this.exit.x
+        ) < this.EXIT_WIDTH / 2 &&
+        Math.abs(
+          player.y -
+          this.exit.y
+        ) < 36
+      ) {
+
+        count++;
+      }
+    }
+
+    return count;
+  }
+
+  // The level is complete when the door is
+  // open and EVERY connected player is in it.
+
+  private checkExit() {
+
+    if (
+      !this.doorOpen ||
+      this.players.size === 0
+    ) {
+      return;
+    }
+
+    if (
+      this.playersAtExit() ===
+      this.players.size
+    ) {
+
+      this.completeLevel();
     }
   }
 
@@ -1464,29 +1278,15 @@ export class GameRoom extends Room {
       of this.players.values()
     ) {
 
-      const spawn =
-        this.spawnPositions[
-          player.playerIndex
-        ];
-
-      player.x =
-        spawn.x;
-
-      player.y =
-        spawn.y;
-
-      player.velocityX =
-        0;
-
-      player.velocityY =
-        0;
-
-      player.jumpCount =
-        0;
-
-      player.alive =
-        true;
+      this.placeAtSpawn(
+        player
+      );
     }
+
+    this.broadcast(
+      "levelLoaded",
+      this.levelPayload()
+    );
   }
 
   // ==========================================
@@ -1532,6 +1332,9 @@ export class GameRoom extends Room {
     this.gameFinished =
       false;
 
+    // No one may join a game in progress.
+    this.lock();
+
     this.currentLevel =
       1;
 
@@ -1545,28 +1348,9 @@ export class GameRoom extends Room {
       of this.players.values()
     ) {
 
-      const spawn =
-        this.spawnPositions[
-          player.playerIndex
-        ];
-
-      player.x =
-        spawn.x;
-
-      player.y =
-        spawn.y;
-
-      player.velocityX =
-        0;
-
-      player.velocityY =
-        0;
-
-      player.jumpCount =
-        0;
-
-      player.alive =
-        true;
+      this.placeAtSpawn(
+        player
+      );
     }
 
     console.log(
@@ -1575,6 +1359,11 @@ export class GameRoom extends Room {
 
     this.broadcast(
       "gameStarted"
+    );
+
+    this.broadcast(
+      "levelLoaded",
+      this.levelPayload()
     );
 
     this.broadcastGameState();
@@ -1603,6 +1392,16 @@ export class GameRoom extends Room {
           ...platform
         })
       );
+
+    this.exit = {
+      ...level.exit
+    };
+
+    this.doorOpen =
+      false;
+
+    this.targetScore =
+      level.crystals.length;
 
     this.crystals.clear();
 
@@ -1634,8 +1433,57 @@ export class GameRoom extends Room {
   }
 
   // ==========================================
+  // LEVEL PAYLOAD
+  // ==========================================
+  //
+  // Static level geometry plus current
+  // crystal state. Sent when a level loads
+  // (and on request), NOT every tick.
+
+  private levelPayload() {
+
+    return {
+
+      level:
+        this.currentLevel,
+
+      maxLevels:
+        this.MAX_LEVELS,
+
+      targetScore:
+        this.targetScore,
+
+      score:
+        this.score,
+
+      platforms:
+        this.platforms,
+
+      crystals:
+        Array.from(
+          this.crystals.values()
+        ),
+
+      exit: {
+        ...this.exit,
+
+        width:
+          this.EXIT_WIDTH,
+
+        height:
+          this.EXIT_HEIGHT
+      },
+
+      doorOpen:
+        this.doorOpen
+    };
+  }
+
+  // ==========================================
   // GAME STATE
   // ==========================================
+  //
+  // Sent every tick: keep it small.
 
   private broadcastGameState() {
 
@@ -1670,13 +1518,14 @@ export class GameRoom extends Room {
             player.ready,
 
           alive:
-            player.alive
-        })
-      );
+            player.alive,
 
-    const crystals =
-      Array.from(
-        this.crystals.values()
+          jumpCount:
+            player.jumpCount,
+
+          grounded:
+            player.grounded
+        })
       );
 
     this.broadcast(
@@ -1685,13 +1534,11 @@ export class GameRoom extends Room {
 
         players,
 
-        crystals,
-
         score:
           this.score,
 
         targetScore:
-          this.CRYSTALS_PER_LEVEL,
+          this.targetScore,
 
         level:
           this.currentLevel,
@@ -1705,8 +1552,11 @@ export class GameRoom extends Room {
         gameFinished:
           this.gameFinished,
 
-        platforms:
-          this.platforms
+        doorOpen:
+          this.doorOpen,
+
+        playersAtExit:
+          this.playersAtExit()
       }
     );
   }
@@ -1759,51 +1609,16 @@ export class GameRoom extends Room {
     roomCode: string
   ): string | undefined {
 
-    // This uses the existing registry
-    // without introducing another lookup
-    // system.
-
-    const normalized =
+    return findRoom(
       roomCode
-        .trim()
-        .toUpperCase();
-
-    // Access through the registry module
-    // is kept compatible with the existing
-    // architecture.
-
-    // The actual lookup is performed by
-    // importing findRoom below.
-
-    return undefined;
-  }
-
-  // ==========================================
-  // HOST
-  // ==========================================
-
-  private getHost():
-    Player | undefined {
-
-    for (
-      const player
-      of this.players.values()
-    ) {
-
-      if (
-        player.playerIndex === 0
-      ) {
-
-        return player;
-      }
-    }
-
-    return undefined;
+    );
   }
 
   // ==========================================
   // ROOM CODE
   // ==========================================
+
+  // Six characters, unique among live rooms.
 
   private generateRoomCode():
     string {
@@ -1811,23 +1626,39 @@ export class GameRoom extends Room {
     const characters =
       "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
-    let code = "";
-
     for (
-      let i = 0;
-      i < 6;
-      i++
+      let attempt = 0;
+      attempt < 100;
+      attempt++
     ) {
 
-      code +=
-        characters[
-          Math.floor(
-            Math.random() *
-            characters.length
-          )
-        ];
+      let code = "";
+
+      for (
+        let i = 0;
+        i < 6;
+        i++
+      ) {
+
+        code +=
+          characters[
+            Math.floor(
+              Math.random() *
+              characters.length
+            )
+          ];
+      }
+
+      if (
+        !roomCodeExists(code)
+      ) {
+
+        return code;
+      }
     }
 
-    return code;
+    throw new Error(
+      "Could not generate a unique room code."
+    );
   }
 }

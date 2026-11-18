@@ -51,6 +51,21 @@ export function findRoom(
 }
 
 // ==========================================
+// CODE EXISTS (silent, for uniqueness checks)
+// ==========================================
+
+export function roomCodeExists(
+  roomCode: string
+): boolean {
+
+  return roomRegistry.has(
+    roomCode
+      .trim()
+      .toUpperCase()
+  );
+}
+
+// ==========================================
 // REMOVE ROOM
 // ==========================================
 
