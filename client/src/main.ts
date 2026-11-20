@@ -5,7 +5,6 @@ import "./style.css";
 import { MenuScene } from "./scenes/MenuScene";
 import { LobbyScene } from "./scenes/LobbyScene";
 import { GameScene } from "./scenes/GameScene";
-import { LeaderboardScene } from "./scenes/LeaderboardScene";
 import { audio } from "./audio/AudioManager";
 
 const config:
@@ -18,6 +17,17 @@ const config:
   height: 600,
 
   backgroundColor: "#202020",
+
+  // The game is drawn at 800 x 600 and shown at 90% of
+  // that (720 x 540 on screen). Mouse clicks and the name
+  // box follow the canvas's real size, so they stay
+  // aligned.
+  scale: {
+
+    mode: Phaser.Scale.NONE,
+
+    zoom: 0.9
+  },
 
   physics: {
 
@@ -37,8 +47,7 @@ const config:
   scene: [
     MenuScene,
     LobbyScene,
-    GameScene,
-    LeaderboardScene
+    GameScene
   ]
 };
 

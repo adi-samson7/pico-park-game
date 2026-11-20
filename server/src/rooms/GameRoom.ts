@@ -3,11 +3,6 @@ import { Room, Client } from "colyseus";
 import { log } from "../log.js";
 
 import {
-  FULL_RUN,
-  getLeaderboard
-} from "../leaderboard.js";
-
-import {
   defaultName,
   pickColor,
   sanitizeName,
@@ -187,10 +182,6 @@ export class GameRoom extends Room {
   // left over from an earlier phase can never
   // act.
   private phaseToken = 0;
-
-  // How long each level of the running game was
-  // played (ms), for the whole-game time.
-  private runLevelMs: number[] = [];
 
   // When the current level started being
   // PLAYED (after its intro); 0 otherwise.
@@ -1897,39 +1888,6 @@ export class GameRoom extends Room {
     const elapsedMs =
       this.levelElapsedMs();
 
-    // The time goes on the leaderboard, with the
-    // names of the players who are here.
-
-    const team =
-      this.connectedPlayers();
-
-    const placement =
-      team.length > 0 && elapsedMs > 0
-        ? getLeaderboard().record({
-            level:
-              completedLevel,
-
-            ms:
-              elapsedMs,
-
-            names:
-              team.map(
-                player =>
-                  player.name
-              ),
-
-            size:
-              team.length,
-
-            at:
-              Date.now()
-          })
-        : null;
-
-    this.runLevelMs.push(
-      elapsedMs
-    );
-
     const token =
       ++this.phaseToken;
 
@@ -1969,21 +1927,7 @@ export class GameRoom extends Room {
           ms,
 
         // How long the level took to play.
-        elapsedMs,
-
-        // Where that puts the team among teams of
-        // the same size (null: not on the board).
-        rank:
-          placement?.rank ?? null,
-
-        record:
-          placement?.record ?? false,
-
-        previousBest:
-          placement?.previousBest ?? null,
-
-        teamSize:
-          team.length
+        elapsedMs
       }
     );
 
@@ -2063,69 +2007,11 @@ export class GameRoom extends Room {
       "GAME FINISHED - PLAYERS WIN"
     );
 
-    // The whole game: every level, added up.
-
-    let totalMs: number | null = null;
-
-    let placement = null;
-
-    const team =
-      this.connectedPlayers();
-
-    if (
-      this.runLevelMs.length >=
-        this.MAX_LEVELS &&
-      team.length > 0
-    ) {
-
-      totalMs =
-        this.runLevelMs.reduce(
-          (sum, ms) =>
-            sum + ms,
-          0
-        );
-
-      placement =
-        getLeaderboard().record({
-          level:
-            FULL_RUN,
-
-          ms:
-            totalMs,
-
-          names:
-            team.map(
-              player =>
-                player.name
-            ),
-
-          size:
-            team.length,
-
-          at:
-            Date.now()
-        });
-    }
-
     this.broadcast(
       "gameFinished",
       {
         result:
-          "win",
-
-        totalMs,
-
-        rank:
-          placement?.rank ?? null,
-
-        record:
-          placement?.record ?? false,
-
-        previousBest:
-          placement?.previousBest ?? null,
-
-        teamSize:
-          team.length
+          "win"
       }
     );
 
@@ -2160,9 +2046,6 @@ export class GameRoom extends Room {
 
     this.score =
       0;
-
-    this.runLevelMs =
-      [];
 
     this.loadLevel(1);
 
@@ -2229,9 +2112,6 @@ export class GameRoom extends Room {
 
     this.score =
       0;
-
-    this.runLevelMs =
-      [];
 
     this.loadLevel(1);
 

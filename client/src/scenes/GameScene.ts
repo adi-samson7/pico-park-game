@@ -18,10 +18,7 @@ import { SnapshotBuffer } from "../net/snapshots";
 
 import { tabSession } from "../net/session";
 
-import {
-  formatTime,
-  ordinal
-} from "../format";
+import { formatTime } from "../format";
 
 import {
   addMuteButton,
@@ -253,11 +250,6 @@ export class GameScene extends Phaser.Scene {
     Phaser.GameObjects.Text | null =
     null;
 
-  // Under the time: "NEW RECORD!" or the rank.
-  private bannerNote:
-    Phaser.GameObjects.Text | null =
-    null;
-
   private bannerVisible = false;
 
   // Runs the shared physics on the local
@@ -484,7 +476,6 @@ export class GameScene extends Phaser.Scene {
     this.bannerVeil = null;
     this.bannerTitle = null;
     this.bannerSub = null;
-    this.bannerNote = null;
     this.bannerVisible = false;
     this.predictor = null;
     this.snapshots = new Map();
@@ -1803,10 +1794,6 @@ export class GameScene extends Phaser.Scene {
           final?: boolean;
           clearMs?: number;
           elapsedMs?: number;
-          rank?: number | null;
-          record?: boolean;
-          previousBest?: number | null;
-          teamSize?: number;
         }
       ) => {
 
@@ -1837,19 +1824,7 @@ export class GameScene extends Phaser.Scene {
               data.completedLevel,
 
             elapsedMs:
-              data.elapsedMs,
-
-            rank:
-              data.rank,
-
-            record:
-              data.record,
-
-            previousBest:
-              data.previousBest,
-
-            teamSize:
-              data.teamSize
+              data.elapsedMs
           }
         );
       }
@@ -1923,15 +1898,7 @@ export class GameScene extends Phaser.Scene {
 
     this.room.onMessage(
       "gameFinished",
-      (
-        data: {
-          totalMs?: number | null;
-          rank?: number | null;
-          record?: boolean;
-          previousBest?: number | null;
-          teamSize?: number;
-        }
-      ) => {
+      () => {
 
         this.gameFinished =
           true;
@@ -1951,21 +1918,8 @@ export class GameScene extends Phaser.Scene {
           7000
         );
 
-        // The whole game's time, and where it ranks.
-
-        const total =
-          data?.totalMs
-            ? `Total time ${formatTime(
-                data.totalMs
-              )}\n${this.rankNote(
-                data
-              )}\n\n`
-            : "\n";
-
         this.showPersistentMessage(
-          "YOU WIN!\n\nALL LEVELS COMPLETE\n\n" +
-          total +
-          "Press ENTER to go back to the lobby"
+          "YOU WIN!\n\nALL LEVELS COMPLETE\n\nPress ENTER to go back to the lobby"
         );
 
         this.statusText.setText(
@@ -2228,31 +2182,12 @@ export class GameScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setDepth(501)
         .setVisible(false);
-
-    this.bannerNote =
-      this.add.text(
-        400,
-        392,
-        "",
-        {
-          fontSize: "30px",
-          color: "#ffdd44",
-          fontStyle: "bold",
-          stroke: "#000000",
-          strokeThickness: 5
-        }
-      )
-        .setOrigin(0.5)
-        .setDepth(501)
-        .setVisible(false);
   }
 
   private showBanner(
     title: string,
     sub: string,
-    color: string,
-    note = "",
-    noteColor = "#ffdd44"
+    color: string
   ) {
 
     if (
@@ -2269,10 +2204,6 @@ export class GameScene extends Phaser.Scene {
 
     this.bannerSub.setText(sub);
 
-    this.bannerNote?.setText(note);
-
-    this.bannerNote?.setColor(noteColor);
-
     // Only pop in when it appears; a text
     // update while it is up changes nothing
     // else.
@@ -2288,14 +2219,9 @@ export class GameScene extends Phaser.Scene {
       of [
         this.bannerVeil,
         this.bannerTitle,
-        this.bannerSub,
-        this.bannerNote
+        this.bannerSub
       ]
     ) {
-
-      if (!item) {
-        continue;
-      }
 
       this.tweens.killTweensOf(item);
 
@@ -2314,14 +2240,9 @@ export class GameScene extends Phaser.Scene {
       const item
       of [
         this.bannerTitle,
-        this.bannerSub,
-        this.bannerNote
+        this.bannerSub
       ]
     ) {
-
-      if (!item) {
-        continue;
-      }
 
       item.setAlpha(1);
 
@@ -2348,8 +2269,7 @@ export class GameScene extends Phaser.Scene {
     const items = [
       this.bannerVeil,
       this.bannerTitle,
-      this.bannerSub,
-      this.bannerNote
+      this.bannerSub
     ];
 
     for (const item of items) {
@@ -2375,43 +2295,6 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  // "NEW RECORD!" (and what it beat), or "2nd best for
-  // 2 players". Nothing when the time did not make
-  // the board.
-
-  private rankNote(
-    info: {
-      rank?: number | null;
-      record?: boolean;
-      previousBest?: number | null;
-      teamSize?: number;
-    }
-  ): string {
-
-    if (info.record) {
-
-      return info.previousBest
-        ? `★ NEW RECORD! ★\n(was ${formatTime(
-            info.previousBest
-          )})`
-        : "★ FIRST RECORD! ★";
-    }
-
-    if (info.rank) {
-
-      const n =
-        info.teamSize ?? 1;
-
-      return `${ordinal(
-        info.rank
-      )} best for ${n} player${
-        n === 1 ? "" : "s"
-      }`;
-    }
-
-    return "";
-  }
-
   // Follows the server: while "intro" or
   // "clear" is on, the banner is up and the
   // players cannot move.
@@ -2421,10 +2304,6 @@ export class GameScene extends Phaser.Scene {
     info: {
       level?: number;
       elapsedMs?: number;
-      rank?: number | null;
-      record?: boolean;
-      previousBest?: number | null;
-      teamSize?: number;
     } = {}
   ) {
 
@@ -2492,29 +2371,12 @@ export class GameScene extends Phaser.Scene {
           : ""
         : "Get ready!";
 
-    // Where the time ranks among teams of the same size.
-
-    let note = "";
-
-    if (
-      phase === "clear" &&
-      info.elapsedMs
-    ) {
-
-      note =
-        this.rankNote(info);
-    }
-
     this.showBanner(
       title,
       sub,
       phase === "clear"
         ? "#66ff88"
-        : "#ffffff",
-      note,
-      info.record
-        ? "#ffdd44"
-        : "#aaccff"
+        : "#ffffff"
     );
   }
 
@@ -4279,8 +4141,7 @@ export class GameScene extends Phaser.Scene {
       of [
         this.bannerVeil,
         this.bannerTitle,
-        this.bannerSub,
-        this.bannerNote
+        this.bannerSub
       ]
     ) {
 
@@ -4290,7 +4151,6 @@ export class GameScene extends Phaser.Scene {
     this.bannerVeil = null;
     this.bannerTitle = null;
     this.bannerSub = null;
-    this.bannerNote = null;
     this.bannerVisible = false;
 
     this.predictor = null;

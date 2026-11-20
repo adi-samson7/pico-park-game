@@ -4,10 +4,6 @@
 # TLS (the client automatically switches to wss://) and supports WebSockets.
 #
 # Run a SINGLE instance: rooms live in the server's memory (see README).
-#
-# The leaderboard (best times) is a file in DATA_DIR (/app/data). On the free plan
-# the disk is wiped by every deploy and restart, so the times start again. To keep
-# them, use a paid plan and uncomment the disk below.
 
 services:
   - type: web
@@ -18,7 +14,3 @@ services:
     numInstances: 1
     healthCheckPath: /health
     autoDeploy: true
-    # disk:
-    #   name: pico-data
-    #   mountPath: /app/data
-    #   sizeGB: 1

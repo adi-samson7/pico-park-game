@@ -1,5 +1,5 @@
 // In a real browser: the player's name and colour (set in the menu, shown in the
-// lobby and in the game, changed in the lobby) and the leaderboard of best times.
+// lobby and in the game, changed in the lobby).
 //
 //   npm run build   (in client/)   then   npm run test:e2e   (in server/)
 
@@ -12,11 +12,7 @@ import { matchMaker } from "colyseus";
 
 import type { App } from "../../src/app.js";
 
-import { getLeaderboard } from "../../src/leaderboard.js";
-
 import { PALETTE } from "../../src/profile.js";
-
-import { formatTime } from "../../../client/src/format.ts";
 
 import { Bot, clientFor, startApp, waitFor } from "../helpers.js";
 
@@ -37,7 +33,7 @@ if (skipReason && process.env.E2E_REQUIRE) {
   throw new Error(`E2E_REQUIRE is set but: ${skipReason}`);
 }
 
-describe("name, colour and leaderboard (real browser)", { skip: skipReason }, () => {
+describe("name and colour (real browser)", { skip: skipReason }, () => {
 
   let app: App;
 
@@ -52,7 +48,6 @@ describe("name, colour and leaderboard (real browser)", { skip: skipReason }, ()
   const menu = "window.__pico.scene.getScene('MenuScene')";
   const lobby = "window.__pico.scene.getScene('LobbyScene')";
   const game = "window.__pico.scene.getScene('GameScene')";
-  const board = "window.__pico.scene.getScene('LeaderboardScene')";
 
   const until = (fn: () => Promise<any>, what: string, ms = 8000) =>
     waitFor(fn, what, ms, 30);
@@ -376,7 +371,7 @@ describe("name, colour and leaderboard (real browser)", { skip: skipReason }, ()
     );
   });
 
-  test("clearing a level says it is a record", async () => {
+  test("clearing a level shows how long it took", async () => {
 
     const me = await b.eval<string>(`${game}.room.sessionId`);
 
@@ -406,146 +401,22 @@ describe("name, colour and leaderboard (real browser)", { skip: skipReason }, ()
 
     await until(() => b.eval(`${game}.phase === 'clear' && ${game}.bannerVisible`), "LEVEL CLEAR");
 
-    const banner = await b.eval<{ sub: string; note: string }>(
-      `({ sub: ${game}.bannerSub.text, note: ${game}.bannerNote.text })`
+    const sub = await b.eval<string>(`${game}.bannerSub.text`);
+
+    assert.match(sub, /^Time \d+\.\d s$/);
+
+    // The names are still floating over the players, greyed behind the banner.
+    assert.deepEqual(
+      Object.values(
+        await b.eval<Record<string, string>>(
+          `Object.fromEntries([...${game}.nameLabels].map(([id, t]) => [id, t.text]))`
+        )
+      ).sort(),
+      ["Captain Jump", "aditya k 2"]
     );
-
-    assert.match(banner.sub, /^Time \d+\.\d s$/);
-    assert.match(banner.note, /FIRST RECORD/);
-
-    // The server holds exactly that time, with both names.
-    const top = getLeaderboard().top(1)[0];
-
-    assert.deepEqual(top.names.sort(), ["Captain Jump", "aditya k 2"]);
-    assert.equal(top.size, 2);
-    assert.equal(banner.sub, `Time ${formatTime(top.ms)}`);
   });
 
-  test("the banner says how a time ranks (checked on the real screen with made-up results)", async () => {
-
-    // Everything in one evaluation, so no state from the server can come in
-    // between and change the phase.
-    const notes = await b.eval<Record<string, string>>(`(() => {
-      const s = ${game};
-      const read = (info) => { s.setPhase('clear', { elapsedMs: 15234, ...info }); return s.bannerNote.text; };
-      const result = {
-        record: read({ record: true, rank: 1, previousBest: 18000, teamSize: 2 }),
-        second: read({ rank: 2, teamSize: 2 }),
-        third: read({ rank: 3, teamSize: 1 }),
-        eleventh: read({ rank: 11, teamSize: 4 }),
-        none: read({ rank: null }),
-        first: read({ record: true, rank: 1, previousBest: null, teamSize: 3 })
-      };
-      return result;
-    })()`);
-
-    assert.match(notes.record, /NEW RECORD/);
-    assert.match(notes.record, /\(was 18\.0 s\)/);
-    assert.equal(notes.second, "2nd best for 2 players");
-    assert.equal(notes.third, "3rd best for 1 player");
-    assert.equal(notes.eleventh, "11th best for 4 players");
-    assert.equal(notes.none, "");
-    assert.match(notes.first, /FIRST RECORD/);
-  });
-
-  // ==========================================
-  // THE LEADERBOARD
-  // ==========================================
-
-  test("after the win, ENTER and LEAVE lead back to the menu", async () => {
-
-    // finish the game for real (the server returns the room to the lobby)
-    room().finishGame();
-
-    await until(() => b.eval(`${game}.gameFinished`), "win screen");
-
-    await b.tap("Enter", "Enter");
-
-    await until(() => b.eval(`${lobby}.sys.isActive()`), "lobby");
-
-    await click(400, 570); // LEAVE
-
-    await until(() => b.eval(`${menu}.sys.isActive()`), "menu");
-  });
-
-  test("the LEADERBOARD button shows the times, with your own highlighted", async () => {
-
-    await click(400, 448);
-
-    await until(() => b.eval(`${board}.sys.isActive() && ${board}.rows.length > 0`), "the board with rows");
-
-    const top = getLeaderboard().top(1)[0];
-
-    const texts = await b.eval<string[]>(
-      `${board}.rows.filter((r) => r.type === 'Text').map((r) => r.text)`
-    );
-
-    assert.ok(texts.includes(formatTime(top.ms)), `the time ${formatTime(top.ms)} in ${JSON.stringify(texts)}`);
-    assert.ok(texts.some((t) => t.includes("Captain Jump")), "the players");
-    assert.ok(texts.includes("2P"), "the team size");
-    assert.ok(texts.includes("TIME") && texts.includes("PLAYERS") && texts.includes("DATE"), "column titles");
-
-    // my name is in it: the row is shown in gold
-    const colours = await b.eval<string[]>(
-      `${board}.rows.filter((r) => r.type === 'Text' && r.text === ${JSON.stringify(formatTime(top.ms))}).map((r) => r.style.color)`
-    );
-
-    assert.deepEqual(colours, ["#ffdd66"]);
-  });
-
-  test("levels and team sizes can be switched; empty boards say so", async () => {
-
-    // team size 3: nobody
-    await click(215 + 58 * 3, 160);
-
-    await until(async () => (await b.eval<string>(`${board}.message.text`)).includes("No 3-player times"), "empty message");
-
-    // team size 2: our time
-    await click(215 + 58 * 2, 160);
-
-    await until(() => b.eval(`${board}.rows.length > 0`), "rows again");
-
-    // level 2: nothing yet
-    await click(165 + 110, 116);
-
-    await until(async () => (await b.eval<string>(`${board}.message.text`)).includes("No 3-player times") === false && (await b.eval<string>(`${board}.message.text`)).includes("No 2-player times"), "level 2 is empty");
-
-    // the arrow keys move between levels
-    await b.tap("ArrowLeft", "ArrowLeft");
-
-    await until(() => b.eval(`${board}.level === 1 && ${board}.rows.length > 0`), "back on level 1 with the arrow key");
-
-    // the whole game: no total yet (the game was not played to the end)
-    await click(165 + 110 + 110 + 165, 116);
-
-    await until(async () => (await b.eval<string>(`${board}.message.text`)).includes("No 2-player times"), "whole game empty");
-
-    // all sizes again
-    await click(215, 160);
-
-    await until(() => b.eval(`${board}.size === 0`), "all sizes");
-  });
-
-  test("when the board cannot be loaded it says so, and a click tries again", async () => {
-
-    await b.eval(`window.__realFetch = window.fetch; window.fetch = () => Promise.reject(new Error('offline'));`);
-
-    await click(215 + 58, 160); // 1 player: triggers a new load
-
-    await until(async () => (await b.eval<string>(`${board}.message.text`)).includes("Could not load"), "error message");
-
-    await b.eval(`window.fetch = window.__realFetch;`);
-
-    await click(400, 340); // "click here to try again"
-
-    await until(async () => (await b.eval<string>(`${board}.message.text`)).includes("No 1-player times"), "loaded again");
-  });
-
-  test("BACK returns to the menu, and the whole session had no errors", async () => {
-
-    await click(400, 560);
-
-    await until(() => b.eval(`${menu}.sys.isActive()`), "menu");
+  test("the whole session had no errors", async () => {
 
     assert.deepEqual(
       b.logs.filter((l) => l.type === "exception"),

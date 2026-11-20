@@ -8,11 +8,7 @@ import {
   saveProfile
 } from "../../client/src/profile.ts";
 
-import {
-  formatNames,
-  formatTime,
-  ordinal
-} from "../../client/src/format.ts";
+import { formatTime } from "../../client/src/format.ts";
 
 import type { KeyValueStorage } from "../../client/src/net/session.ts";
 
@@ -97,7 +93,7 @@ describe("the remembered profile", () => {
   });
 });
 
-describe("times and names on screen", () => {
+describe("times on screen", () => {
 
   test("under a minute: seconds with a tenth", () => {
 
@@ -121,30 +117,6 @@ describe("times and names on screen", () => {
 
     for (const bad of [-1, NaN, Infinity, "5" as any, null as any, undefined as any]) {
       assert.equal(formatTime(bad), "--", String(bad));
-    }
-  });
-
-  test("names are shortened with a count of the rest", () => {
-
-    assert.equal(formatNames(["Ada"]), "Ada");
-    assert.equal(formatNames(["Ada", "Sam"]), "Ada, Sam");
-    assert.equal(formatNames(["Alexander", "Bartholomew", "Christopher", "Dominic"], 22), "Alexander +3");
-    assert.equal(formatNames(["Alexander", "Bartholomew", "Chris"], 22), "Alexander +2");
-    assert.equal(formatNames(["Ada", "Sam", "Bo", "Cy"], 22), "Ada, Sam, Bo, Cy");
-    assert.equal(formatNames([], 22), "");
-    assert.equal(formatNames(["x".repeat(40)], 22).length, 22);
-  });
-
-  test("ordinals", () => {
-
-    const expected: Record<number, string> = {
-      1: "1st", 2: "2nd", 3: "3rd", 4: "4th", 10: "10th",
-      11: "11th", 12: "12th", 13: "13th", 21: "21st", 22: "22nd",
-      23: "23rd", 101: "101st", 111: "111th", 112: "112th"
-    };
-
-    for (const [n, text] of Object.entries(expected)) {
-      assert.equal(ordinal(Number(n)), text);
     }
   });
 });

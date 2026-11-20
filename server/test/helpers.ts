@@ -2,7 +2,6 @@ import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 import { matchMaker } from "colyseus";
 
 import { createApp, type App } from "../src/app.js";
-import type { Leaderboard } from "../src/leaderboard.js";
 
 // Keep test output readable.
 process.env.LOG_LEVEL = "silent";
@@ -51,7 +50,7 @@ export async function waitFor<T>(
 
 /** Starts a quiet server on a free port. */
 export function startApp(
-  extra: { staticDir?: string; leaderboard?: Leaderboard } = {}
+  extra: { staticDir?: string } = {}
 ): Promise<App> {
 
   return createApp({

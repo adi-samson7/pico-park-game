@@ -304,10 +304,8 @@ export class MenuScene extends Phaser.Scene {
     );
 
     // ----------------------------------------
-    // LEADERBOARD, NAME AND COLOUR
+    // NAME AND COLOUR
     // ----------------------------------------
-
-    this.createLeaderboardButton();
 
     this.createProfileEditor();
 
@@ -342,64 +340,6 @@ export class MenuScene extends Phaser.Scene {
 
       void this.tryResume();
     }
-  }
-
-  // ========================================
-  // LEADERBOARD BUTTON
-  // ========================================
-
-  private createLeaderboardButton() {
-
-    const button =
-      this.add.text(
-        400,
-        448,
-        "LEADERBOARD",
-        {
-          fontSize: "18px",
-          color: "#ffffff",
-          backgroundColor: "#444444",
-          padding: {
-            left: 22,
-            right: 22,
-            top: 8,
-            bottom: 8
-          }
-        }
-      )
-        .setOrigin(0.5)
-        .setInteractive({
-          useHandCursor: true
-        });
-
-    juiceButton(
-      this,
-      button
-    );
-
-    button.on(
-      "pointerover",
-      () => button.setStyle({
-        backgroundColor: "#666666"
-      })
-    );
-
-    button.on(
-      "pointerout",
-      () => button.setStyle({
-        backgroundColor: "#444444"
-      })
-    );
-
-    button.on(
-      "pointerdown",
-      () => {
-
-        this.scene.start(
-          "LeaderboardScene"
-        );
-      }
-    );
   }
 
   // ========================================

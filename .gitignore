@@ -9,9 +9,6 @@ dist/
 .env.*
 !.env.example
 
-# the leaderboard file (server/data by default, see DATA_DIR)
-data/
-
 # logs and test artefacts
 *.log
 coverage/

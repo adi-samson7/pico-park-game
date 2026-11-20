@@ -9,9 +9,9 @@
 // see scripts/sync-physics.mjs.
 //
 // Names come from strangers and end up on other
-// people's screens and in a public leaderboard, so
-// they are cleaned strictly: letters, digits and a
-// few punctuation marks only, one line, short.
+// people's screens, so they are cleaned strictly:
+// letters, digits and a few punctuation marks only,
+// one line, short.
 
 export const NAME_MAX = 12;
 
