@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 
 import { audio } from "./audio/AudioManager";
+import { drawIcon } from "./ui/icons";
 
 // ==========================================
 // PARTICLE TEXTURE
@@ -352,9 +353,16 @@ export function addMuteButton(
       ? "SOUND: OFF [M]"
       : "SOUND: ON [M]";
 
+  // The speaker icon sits in front of the words.
+
+  const icon =
+    scene.add.graphics()
+      .setPosition(x + 8, y + 9)
+      .setDepth(200);
+
   const text =
     scene.add.text(
-      x,
+      x + 24,
       y,
       label(),
       {
@@ -382,8 +390,19 @@ export function addMuteButton(
 
     text.setColor(
       audio.isMuted
-        ? "#ff8888"
-        : "#aaaaaa"
+        ? "#ff7b7b"
+        : "#9aa0c4"
+    );
+
+    icon.clear();
+
+    drawIcon(
+      icon,
+      "speaker",
+      14,
+      audio.isMuted
+        ? 0xff7b7b
+        : 0x9aa0c4
     );
   };
 
@@ -433,6 +452,26 @@ export function addMuteButton(
     }
   );
 
+  // Clicking the icon works as well.
+  icon.setInteractive(
+    new Phaser.Geom.Rectangle(-10, -10, 20, 20),
+    Phaser.Geom.Rectangle.Contains
+  );
+
+  icon.input!.cursor = "pointer";
+
+  icon.on(
+    "pointerdown",
+    () => {
+
+      audio.toggleMute();
+
+      audio.sfx(
+        "click"
+      );
+    }
+  );
+
   return text;
 }
 
@@ -444,7 +483,9 @@ export function addMuteButton(
  *  interactive text button. */
 export function juiceButton(
   scene: Phaser.Scene,
-  button: Phaser.GameObjects.Text,
+  button:
+    | Phaser.GameObjects.Text
+    | Phaser.GameObjects.Container,
   hoverScale = 1.07
 ) {
 

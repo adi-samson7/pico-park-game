@@ -62,9 +62,17 @@ describe("name and colour (real browser)", { skip: skipReason }, () => {
       "JSON.parse(localStorage.getItem('pico.profile') || 'null')"
     );
 
-  const swatchX = (i: number) => 400 + (i - 3.5) * 32;
+  /** Clicks the middle of a game object, wherever the layout put it. */
+  const clickObject = async (expression: string) => {
 
-  const SWATCH_Y = 556;
+    const c = await b.eval<{ x: number; y: number }>(
+      `(() => { const r = ${expression}.getBounds(); return { x: r.centerX, y: r.centerY }; })()`
+    );
+
+    await click(c.x, c.y);
+  };
+
+  const swatch = (i: number) => `${menu}.swatches[${i}]`;
 
   const goToMenu = async () => {
 
@@ -190,7 +198,7 @@ describe("name and colour (real browser)", { skip: skipReason }, () => {
 
     assert.equal((await stored())!.color, null, "none chosen yet");
 
-    await click(swatchX(5), SWATCH_Y);
+    await clickObject(swatch(5));
 
     assert.equal((await stored())!.color, PALETTE[5]);
 
@@ -200,11 +208,11 @@ describe("name and colour (real browser)", { skip: skipReason }, () => {
 
     assert.deepEqual(chosen, [PALETTE[5]], "the picked colour is shown as selected");
 
-    await click(swatchX(5), SWATCH_Y);
+    await clickObject(swatch(5));
 
     assert.equal((await stored())!.color, null, "clicking it again lets the game choose");
 
-    await click(swatchX(5), SWATCH_Y);
+    await clickObject(swatch(5));
 
     assert.equal((await stored())!.color, PALETTE[5]);
   });
@@ -228,7 +236,7 @@ describe("name and colour (real browser)", { skip: skipReason }, () => {
 
   test("the lobby shows the chosen name and colour, and so does the server", async () => {
 
-    await click(400, 280); // CREATE ROOM
+    await clickObject(`${menu}.createButton`);
 
     await until(() => b.eval(`!!${lobby}.roomCode`), "room code");
 
@@ -276,7 +284,8 @@ describe("name and colour (real browser)", { skip: skipReason }, () => {
 
     const before = room().players.get(me).color;
 
-    await click(138, 275); // my colour dot (first row)
+    // my colour dot: the third thing in my row (row, halo, dot)
+    await clickObject(`${lobby}.playerTexts.get(${JSON.stringify(me)}).getData('extras')[2]`);
 
     await until(async () => room().players.get(me).color !== before, "colour changed");
 
@@ -302,7 +311,7 @@ describe("name and colour (real browser)", { skip: skipReason }, () => {
 
     await b.eval(`window.prompt = () => "Captain  <Jump>"`);
 
-    await click(220, 275);
+    await clickObject(`${lobby}.playerTexts.get(${JSON.stringify(me)})`);
 
     await until(async () => room().players.get(me).name === "Captain Jump", "renamed (and cleaned)");
 
@@ -318,7 +327,7 @@ describe("name and colour (real browser)", { skip: skipReason }, () => {
     // cancelling changes nothing
     await b.eval(`window.prompt = () => null`);
 
-    await click(220, 275);
+    await clickObject(`${lobby}.playerTexts.get(${JSON.stringify(me)})`);
 
     await sleep(300);
 

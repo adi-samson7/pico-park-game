@@ -161,7 +161,11 @@ describe("client on a static host, game server elsewhere", { skip: skipReason },
 
     await sleep(700);
 
-    await b.click(rect.x + (400 * rect.w) / 800, rect.y + (280 * rect.w) / 800);
+    const create = await b.eval<{ x: number; y: number }>(
+      `(() => { const r = ${menu}.createButton.getBounds(); return { x: r.centerX, y: r.centerY }; })()`
+    );
+
+    await b.click(rect.x + (create.x * rect.w) / 800, rect.y + (create.y * rect.w) / 800);
 
     await until(() => b.eval(`!!${lobby}.roomCode`), "room code (matchmaking across origins)");
 

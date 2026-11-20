@@ -72,6 +72,16 @@ describe("netcode in a real browser (laggy network)", { skip: skipReason }, () =
   const click = (gx: number, gy: number) =>
     b.click(rect.x + (gx * rect.w) / 800, rect.y + (gy * rect.w) / 800);
 
+  /** Clicks the middle of a game object, wherever the layout put it. */
+  const clickObject = async (expression: string) => {
+
+    const c = await b.eval<{ x: number; y: number }>(
+      `(() => { const r = ${expression}.getBounds(); return { x: r.centerX, y: r.centerY }; })()`
+    );
+
+    await click(c.x, c.y);
+  };
+
   /** The server's own record of a player. */
   const serverPlayer = (roomId: string, id: string) =>
     (matchMaker.getLocalRoomById(roomId) as any)?.players.get(id);
@@ -145,7 +155,7 @@ describe("netcode in a real browser (laggy network)", { skip: skipReason }, () =
 
     for (let attempt = 1; ; attempt++) {
 
-      await click(400, 280);
+      await clickObject(`${menu}.createButton`);
 
       try {
         await waitFor(() => b.eval(`!!${lobby}.roomCode`), "room code", 3000, 30);
@@ -722,7 +732,7 @@ describe("netcode in a real browser (laggy network)", { skip: skipReason }, () =
 
     assert.ok(await b.eval("sessionStorage.getItem('pico.session')"));
 
-    await click(400, 570); // LEAVE
+    await clickObject(`${lobby}.leaveButton`);
 
     await until(() => b.eval(`${menu}.sys.isActive()`), "menu");
 

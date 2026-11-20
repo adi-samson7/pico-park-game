@@ -18,23 +18,68 @@ import {
   sanitizeName
 } from "../shared/profile";
 
-// Roster table (game coordinates).
-const ROW_TOP = 275;
-const ROW_STEP = 50;
-const ROW_WIDTH = 580;
-const ROW_HEIGHT = 40;
-const COL_DOT = 138;
-const COL_NAME = 162;
-const COL_STATUS = 482;
-const COL_PING = 676;
-const SLOTS = 4;
-
-const hex = (color: number) =>
-  "#" + color.toString(16).padStart(6, "0");
 import {
   addMuteButton,
   juiceButton
 } from "../effects";
+
+import {
+  addBackground,
+  addPillHeading,
+  addTitle,
+  drawPanel
+} from "../ui/draw";
+
+import {
+  drawIcon,
+  drawSignal
+} from "../ui/icons";
+
+import {
+  COLOR,
+  FONT_BODY,
+  hex
+} from "../ui/theme";
+
+import { UiButton } from "../ui/UiButton";
+
+// ------------------------------------------------------------
+// LAYOUT (game coordinates, 800 x 600)
+// ------------------------------------------------------------
+
+// the room code panel
+const CODE_Y = 187;
+
+const CODE_BOX_X = 410;
+
+// the roster: one row per seat
+const ROW_TOP = 250;
+
+const ROW_STEP = 47;
+
+const ROW_WIDTH = 648;
+
+const ROW_HEIGHT = 42;
+
+const COL_DOT = 107;
+
+const COL_NAME = 136;
+
+// the right edge of the status pill; the ping sits after it
+const COL_PILL_RIGHT = 626;
+
+const COL_BARS = 660;
+
+const COL_PING = 672;
+
+const SLOTS = 4;
+
+// the buttons
+const BUTTONS_Y = 480;
+
+const READY_X = 247;
+
+const START_X = 538;
 
 interface PlayerData {
   id: string;
@@ -88,6 +133,11 @@ export class LobbyScene extends Phaser.Scene {
   // listener added here is removed again.
   private unsubs: (() => void)[] = [];
 
+  // Set once the lobby hands over to the game (or is shut
+  // down): a message that still arrives must not touch
+  // pictures that are being taken down.
+  private closing = false;
+
   private network!: NetworkManager;
   private room!: Room;
 
@@ -106,21 +156,22 @@ export class LobbyScene extends Phaser.Scene {
     Map<string, Phaser.GameObjects.Text> =
     new Map();
 
-  private readyButton!:
-    Phaser.GameObjects.Text;
+  // Public so the browser tests can find and click them.
+  readyButton!: UiButton;
 
-  private startButton!:
-    Phaser.GameObjects.Text;
+  startButton!: UiButton;
+
+  leaveButton!: UiButton;
 
   private statusText!:
     Phaser.GameObjects.Text;
 
-  private roomCodeText!:
+  roomCodeText!:
     Phaser.GameObjects.Text;
 
   // "COPY" next to the room code.
-  private copyButton:
-    Phaser.GameObjects.Text | null = null;
+  copyButton:
+    UiButton | null = null;
 
   private copyResetTimer:
     Phaser.Time.TimerEvent | null = null;
@@ -157,6 +208,8 @@ export class LobbyScene extends Phaser.Scene {
 
     this.unsubs = [];
 
+    this.closing = false;
+
     this.copyButton = null;
 
     this.copyResetTimer = null;
@@ -172,9 +225,7 @@ export class LobbyScene extends Phaser.Scene {
 
   async create() {
 
-    this.cameras.main.setBackgroundColor(
-      "#202020"
-    );
+    addBackground(this);
 
     this.events.once(
       Phaser.Scenes.Events.SHUTDOWN,
@@ -184,7 +235,7 @@ export class LobbyScene extends Phaser.Scene {
     addMuteButton(
       this,
       20,
-      575
+      565
     );
 
     audio.playMusic(
@@ -195,26 +246,17 @@ export class LobbyScene extends Phaser.Scene {
     // TITLE
     // ----------------------------------------
 
-    this.add.text(
-      400,
-      50,
-      "PICO CO-OP",
-      {
-        fontSize: "42px",
-        color: "#ffffff",
-        fontStyle: "bold"
-      }
-    ).setOrigin(0.5);
+    addTitle(
+      this,
+      52,
+      34
+    );
 
-    this.add.text(
-      400,
-      100,
-      "LOBBY",
-      {
-        fontSize: "28px",
-        color: "#aaaaaa"
-      }
-    ).setOrigin(0.5);
+    addPillHeading(
+      this,
+      110,
+      "LOBBY"
+    );
 
     // ----------------------------------------
     // STATUS
@@ -223,23 +265,70 @@ export class LobbyScene extends Phaser.Scene {
     this.statusText =
       this.add.text(
         400,
-        145,
+        146,
         "Connecting...",
         {
-          fontSize: "20px",
-          color: "#cccccc"
+          fontSize: "19px",
+          color: COLOR.text
         }
       ).setOrigin(0.5);
 
     // ----------------------------------------
     // ROOM CODE
     // ----------------------------------------
+    //
+    // A panel: the words ROOM CODE, the code in its own box,
+    // and COPY. The code appears when the server has told us.
+    // Clicking COPY (or the code) puts it on the clipboard so
+    // it can be pasted to friends.
+
+    const codePanel =
+      this.add.graphics();
+
+    drawPanel(
+      codePanel,
+      400,
+      CODE_Y,
+      494,
+      46,
+      {
+        fill: COLOR.panel,
+        stroke: COLOR.strokeSoft,
+        strokeWidth: 2,
+        radius: 12
+      }
+    );
+
+    this.add.text(
+      186,
+      CODE_Y,
+      "ROOM CODE:",
+      {
+        fontSize: "17px",
+        fontStyle: "bold",
+        color: COLOR.textSoft
+      }
+    ).setOrigin(0, 0.5);
+
+    drawPanel(
+      codePanel,
+      CODE_BOX_X,
+      CODE_Y,
+      166,
+      36,
+      {
+        fill: COLOR.panelDeep,
+        stroke: COLOR.strokeSoft,
+        strokeWidth: 1,
+        radius: 8
+      }
+    );
 
     this.roomCodeText =
       this.add.text(
-        400,
-        190,
-        "ROOM CODE: ------",
+        CODE_BOX_X,
+        CODE_Y,
+        "------",
         {
           fontSize: "26px",
           color: "#ffffff",
@@ -247,55 +336,23 @@ export class LobbyScene extends Phaser.Scene {
         }
       ).setOrigin(0.5);
 
-    this.add.text(
-      400,
-      456,
-      "★ host   ·   click your colour or name to change them",
-      {
-        fontSize: "12px",
-        color: "#777777"
-      }
-    ).setOrigin(0.5);
-
-    // ----------------------------------------
-    // COPY ROOM CODE
-    // ----------------------------------------
-    //
-    // Appears once the code is known. Clicking
-    // it (or the code itself) copies the code
-    // so it can be pasted to friends.
-
     this.copyButton =
-      this.add.text(
-        548,
-        190,
-        "COPY",
+      new UiButton(
+        this,
         {
-          fontSize: "16px",
-          color: "#ffffff",
-          backgroundColor: "#446688",
-
-          // A fixed width, so the button does not
-          // change size (and shove the code
-          // aside) when it says COPIED!
-          fixedWidth: 130,
-          align: "center",
-
-          padding: {
-            left: 0,
-            right: 0,
-            top: 6,
-            bottom: 6
-          }
+          x: 579,
+          y: CODE_Y,
+          width: 126,
+          height: 38,
+          label: "COPY",
+          fontSize: 16,
+          icon: "copy",
+          variant: "primary",
+          radius: 9
         }
-      )
-        .setOrigin(0, 0.5)
-        .setVisible(false)
-        .setInteractive({
-          useHandCursor: true
-        });
+      );
 
-    this.layoutRoomCode();
+    this.copyButton.setVisible(false);
 
     juiceButton(
       this,
@@ -321,17 +378,61 @@ export class LobbyScene extends Phaser.Scene {
     );
 
     // ----------------------------------------
+    // A LINE OF HELP UNDER THE ROSTER
+    // ----------------------------------------
+
+    {
+
+      const hint =
+        this.add.text(
+          0,
+          428,
+          "host - click your colour or name to change them",
+          {
+            fontSize: "13px",
+            color: COLOR.textDim
+          }
+        ).setOrigin(0.5);
+
+      const star =
+        this.add.graphics();
+
+      const gap = 10;
+
+      const iconSize = 15;
+
+      const total =
+        iconSize + gap + hint.width;
+
+      star.setPosition(
+        400 - total / 2 + iconSize / 2,
+        428
+      );
+
+      drawIcon(
+        star,
+        "star",
+        iconSize,
+        0x8a90b4
+      );
+
+      hint.setX(
+        400 - total / 2 + iconSize + gap + hint.width / 2
+      );
+    }
+
+    // ----------------------------------------
     // ERROR
     // ----------------------------------------
 
     this.errorText =
       this.add.text(
         400,
-        225,
+        219,
         "",
         {
-          fontSize: "18px",
-          color: "#ff6666"
+          fontSize: "14px",
+          color: COLOR.red_
         }
       ).setOrigin(0.5);
 
@@ -501,7 +602,7 @@ export class LobbyScene extends Phaser.Scene {
           data.roomCode;
 
         this.roomCodeText.setText(
-          `ROOM CODE: ${data.roomCode}`
+          data.roomCode
         );
 
         this.layoutRoomCode();
@@ -993,37 +1094,16 @@ export class LobbyScene extends Phaser.Scene {
 
   private layoutRoomCode() {
 
+    // The code sits in its own box; COPY only appears once the
+    // code is known (the box shows ------ until then).
+
     if (!this.roomCodeText) {
       return;
     }
 
-    const gap = 16;
-
-    const codeWidth =
-      this.roomCodeText.width;
-
-    const showCopy =
-      !!this.copyButton?.visible;
-
-    const total =
-      codeWidth +
-      (showCopy
-        ? gap + this.copyButton!.width
-        : 0);
-
-    const left =
-      400 - total / 2;
-
-    this.roomCodeText
-      .setOrigin(0, 0.5)
-      .setPosition(left, 190);
-
-    this.copyButton
-      ?.setOrigin(0, 0.5)
-      .setPosition(
-        left + codeWidth + gap,
-        190
-      );
+    this.roomCodeText.setText(
+      this.roomCode || "------"
+    );
   }
 
   // ==========================================
@@ -1066,12 +1146,11 @@ export class LobbyScene extends Phaser.Scene {
         : "PRESS CTRL+C"
     );
 
-    this.copyButton.setStyle({
-      backgroundColor:
-        copied
-          ? "#226622"
-          : "#884422"
-    });
+    this.copyButton.setVariant(
+      copied
+        ? "success"
+        : "warn"
+    );
 
     // Nothing could be copied (clipboard
     // blocked): select the code for the
@@ -1103,10 +1182,9 @@ export class LobbyScene extends Phaser.Scene {
             "COPY"
           );
 
-          this.copyButton.setStyle({
-            backgroundColor:
-              "#446688"
-          });
+          this.copyButton.setVariant(
+            "primary"
+          );
 
           if (!copied) {
             this.errorText.setText("");
@@ -1133,6 +1211,8 @@ export class LobbyScene extends Phaser.Scene {
   }
 
   private teardown() {
+
+    this.closing = true;
 
     for (const off of this.unsubs) {
       off();
@@ -1202,7 +1282,7 @@ export class LobbyScene extends Phaser.Scene {
       data.roomCode;
 
     this.roomCodeText.setText(
-      `ROOM CODE: ${data.roomCode}`
+      data.roomCode
     );
 
     this.copyButton?.setVisible(
@@ -1253,6 +1333,8 @@ export class LobbyScene extends Phaser.Scene {
         this.room.sessionId
       );
 
+    this.closing = true;
+
     this.clearLobbyUI();
 
     this.registry.set(
@@ -1281,6 +1363,10 @@ export class LobbyScene extends Phaser.Scene {
 
   private updatePlayerList() {
 
+    if (this.closing) {
+      return;
+    }
+
     for (
       const text
       of this.playerTexts.values()
@@ -1302,9 +1388,8 @@ export class LobbyScene extends Phaser.Scene {
 
     this.playerTexts.clear();
 
-    // One row per seat, taken or not: the
-    // table keeps its shape and shows how many
-    // players fit.
+    // One row per seat, taken or not: the table keeps its
+    // shape and shows how many players fit.
 
     for (let slot = 0; slot < SLOTS; slot++) {
 
@@ -1323,29 +1408,52 @@ export class LobbyScene extends Phaser.Scene {
         Phaser.GameObjects.GameObject[] =
         [];
 
-      // ---- empty seat ----
+      const background =
+        this.add.graphics().setDepth(-1);
+
+      extras.push(background);
+
+      // ---- an empty seat ----
 
       if (!player) {
 
-        extras.push(
-          this.add.rectangle(
-            400,
-            y,
-            ROW_WIDTH,
-            ROW_HEIGHT,
-            0x262626,
-            0.6
-          ).setDepth(-1)
+        drawPanel(
+          background,
+          400,
+          y,
+          ROW_WIDTH,
+          ROW_HEIGHT,
+          {
+            fill: COLOR.panelDeep,
+            fillAlpha: 0.55,
+            stroke: COLOR.strokeSoft,
+            strokeAlpha: 0.7,
+            strokeWidth: 1,
+            radius: 12
+          }
         );
+
+        const icon =
+          this.add.graphics()
+            .setPosition(COL_DOT, y);
+
+        drawIcon(
+          icon,
+          "person",
+          18,
+          0x5b6186
+        );
+
+        extras.push(icon);
 
         const empty =
           this.add.text(
-            COL_NAME,
+            COL_NAME + 4,
             y,
             "waiting for player...",
             {
-              fontSize: "18px",
-              color: "#555555",
+              fontSize: "17px",
+              color: COLOR.textFaint,
               fontStyle: "italic"
             }
           ).setOrigin(0, 0.5);
@@ -1368,19 +1476,12 @@ export class LobbyScene extends Phaser.Scene {
       const away =
         player.connected === false;
 
-      const status =
-        away
-          ? "RECONNECTING..."
-          : player.ready
-            ? "READY"
-            : "NOT READY";
+      const isHost =
+        player.id === this.hostId;
 
-      const statusColor =
-        away
-          ? "#ffcc66"
-          : player.ready
-            ? "#66ff66"
-            : "#999999";
+      const isMe =
+        player.id ===
+        this.room?.sessionId;
 
       const rtt =
         away
@@ -1389,12 +1490,63 @@ export class LobbyScene extends Phaser.Scene {
               player.id
             ) ?? null;
 
-      const isHost =
-        player.id === this.hostId;
+      // the row: yours has a glowing blue edge
 
-      const isMe =
-        player.id ===
-        this.room?.sessionId;
+      drawPanel(
+        background,
+        400,
+        y,
+        ROW_WIDTH,
+        ROW_HEIGHT,
+        {
+          fill: COLOR.panel,
+          stroke:
+            isMe
+              ? COLOR.blue
+              : COLOR.strokeSoft,
+          strokeWidth: 2,
+          radius: 12,
+          glow: isMe ? 8 : 0,
+          glowStrength: 0.7
+        }
+      );
+
+      // the player's colour, with a soft halo
+
+      const halo =
+        this.add.circle(
+          COL_DOT,
+          y,
+          13,
+          player.color,
+          0.22
+        );
+
+      const dot =
+        this.add.circle(
+          COL_DOT,
+          y,
+          8.5,
+          player.color
+        );
+
+      extras.push(halo, dot);
+
+      // Your own colour: click for the next free one.
+
+      if (isMe) {
+
+        dot.setInteractive({
+          useHandCursor: true
+        });
+
+        dot.on(
+          "pointerdown",
+          () => this.nextColor()
+        );
+      }
+
+      // the name
 
       let playerName =
         player.name ||
@@ -1412,56 +1564,6 @@ export class LobbyScene extends Phaser.Scene {
           " (you)";
       }
 
-      // row background (yours is outlined)
-
-      const background =
-        this.add.rectangle(
-          400,
-          y,
-          ROW_WIDTH,
-          ROW_HEIGHT,
-          0x2e2e2e,
-          0.95
-        ).setDepth(-1);
-
-      if (isMe) {
-
-        background.setStrokeStyle(
-          2,
-          0x6699ff
-        );
-      }
-
-      extras.push(background);
-
-      // colour dot, centred on the row
-
-      const dot =
-        this.add.circle(
-          COL_DOT,
-          y,
-          9,
-          player.color
-        );
-
-      extras.push(dot);
-
-      // Your own colour: click for the next free one.
-
-      if (isMe) {
-
-        dot.setInteractive({
-          useHandCursor: true
-        });
-
-        dot.on(
-          "pointerdown",
-          () => this.nextColor()
-        );
-      }
-
-      // name
-
       const text =
         this.add.text(
           COL_NAME,
@@ -1472,7 +1574,7 @@ export class LobbyScene extends Phaser.Scene {
             color:
               isMe
                 ? "#ffffff"
-                : "#cccccc",
+                : COLOR.textSoft,
             fontStyle:
               isMe
                 ? "bold"
@@ -1494,40 +1596,101 @@ export class LobbyScene extends Phaser.Scene {
         );
       }
 
-      // status, in its own column
+      // the status, in a pill
 
-      extras.push(
+      const status =
+        away
+          ? "RECONNECTING"
+          : player.ready
+            ? "READY"
+            : "NOT READY";
+
+      const pillColors =
+        away
+          ? { fill: 0x4d3f17, text: COLOR.amber_ }
+          : player.ready
+            ? { fill: 0x1b5a35, text: COLOR.green_ }
+            : { fill: 0x2a2e48, text: COLOR.textSoft };
+
+      const statusText =
         this.add.text(
-          COL_STATUS,
+          0,
           y,
           status,
           {
-            fontSize: "19px",
-            color: statusColor,
-            fontStyle: "bold"
+            fontSize: "14px",
+            fontStyle: "bold",
+            color: pillColors.text
           }
-        ).setOrigin(0, 0.5)
+        ).setOrigin(0.5);
+
+      const pillWidth =
+        statusText.width + 26;
+
+      const pillX =
+        COL_PILL_RIGHT - pillWidth / 2;
+
+      statusText.setX(pillX);
+
+      const pill =
+        this.add.graphics();
+
+      drawPanel(
+        pill,
+        pillX,
+        y,
+        pillWidth,
+        26,
+        {
+          fill: pillColors.fill,
+          radius: 7
+        }
       );
 
-      // ping, right-aligned, coloured by quality
+      // the pill is drawn below its words
+      pill.setDepth(statusText.depth - 0.5);
+
+      extras.push(pill, statusText);
+
+      // the connection: three bars and the time in ms
 
       if (rtt !== null) {
 
+        const quality =
+          qualityOf(rtt);
+
+        const color =
+          QUALITY_COLORS[quality];
+
+        const bars =
+          quality === "good"
+            ? 3
+            : quality === "ok"
+              ? 2
+              : 1;
+
+        const signal =
+          this.add.graphics()
+            .setPosition(COL_BARS, y);
+
+        drawSignal(
+          signal,
+          16,
+          bars,
+          color
+        );
+
         extras.push(
+          signal,
           this.add.text(
             COL_PING,
             y,
-            `${rtt} ms`,
+            `${rtt}ms`,
             {
-              fontSize: "16px",
-              color:
-                hex(
-                  QUALITY_COLORS[
-                    qualityOf(rtt)
-                  ]
-                )
+              fontSize: "14px",
+              color: hex(color)
             }
-          ).setOrigin(1, 0.5)
+          ).setOrigin(0, 0.5)
         );
       }
 
@@ -1553,6 +1716,7 @@ export class LobbyScene extends Phaser.Scene {
   private updateReadyButton() {
 
     if (
+      this.closing ||
       !this.readyButton ||
       !this.room
     ) {
@@ -1568,16 +1732,17 @@ export class LobbyScene extends Phaser.Scene {
       return;
     }
 
+    // Ready: the button turns green and offers to take it back.
+
     if (myPlayer.ready) {
 
       this.readyButton.setText(
         "UNREADY"
       );
 
-      this.readyButton.setStyle({
-        backgroundColor:
-          "#226622"
-      });
+      this.readyButton.setVariant(
+        "success"
+      );
 
     } else {
 
@@ -1585,10 +1750,9 @@ export class LobbyScene extends Phaser.Scene {
         "READY"
       );
 
-      this.readyButton.setStyle({
-        backgroundColor:
-          "#444444"
-      });
+      this.readyButton.setVariant(
+        "primary"
+      );
     }
   }
 
@@ -1599,6 +1763,7 @@ export class LobbyScene extends Phaser.Scene {
   private updateStartButton() {
 
     if (
+      this.closing ||
       !this.startButton
     ) {
       return;
@@ -1619,7 +1784,7 @@ export class LobbyScene extends Phaser.Scene {
 
     this.readyButton?.setX(
       isHost
-        ? 250
+        ? READY_X
         : 400
     );
 
@@ -1648,10 +1813,9 @@ export class LobbyScene extends Phaser.Scene {
         "START GAME"
       );
 
-      this.startButton.setStyle({
-        backgroundColor:
-          "#226622"
-      });
+      this.startButton.setVariant(
+        "primary"
+      );
 
     } else {
 
@@ -1659,10 +1823,9 @@ export class LobbyScene extends Phaser.Scene {
         "WAITING FOR PLAYERS"
       );
 
-      this.startButton.setStyle({
-        backgroundColor:
-          "#444444"
-      });
+      this.startButton.setVariant(
+        "neutral"
+      );
     }
   }
 
@@ -1677,60 +1840,23 @@ export class LobbyScene extends Phaser.Scene {
     // ----------------------------------------
 
     this.readyButton =
-      this.add.text(
-        250,
-        500,
-        "READY",
+      new UiButton(
+        this,
         {
-          fontSize: "22px",
-          color: "#ffffff",
-          backgroundColor: "#444444",
-          padding: {
-            left: 25,
-            right: 25,
-            top: 12,
-            bottom: 12
-          }
+          x: READY_X,
+          y: BUTTONS_Y,
+          width: 255,
+          height: 48,
+          label: "READY",
+          fontSize: 24,
+          icon: "play",
+          variant: "primary"
         }
-      )
-      .setOrigin(0.5)
-      .setInteractive({
-        useHandCursor: true
-      });
+      );
 
     juiceButton(
       this,
       this.readyButton
-    );
-
-    this.readyButton.on(
-      "pointerover",
-      () => {
-
-        const myPlayer =
-          this.players.get(
-            this.room.sessionId
-          );
-
-        if (
-          myPlayer?.ready
-        ) {
-          return;
-        }
-
-        this.readyButton.setStyle({
-          backgroundColor:
-            "#666666"
-        });
-      }
-    );
-
-    this.readyButton.on(
-      "pointerout",
-      () => {
-
-        this.updateReadyButton();
-      }
     );
 
     this.readyButton.on(
@@ -1753,165 +1879,93 @@ export class LobbyScene extends Phaser.Scene {
     // START BUTTON
     // ----------------------------------------
 
-    {
-
-      this.startButton =
-        this.add.text(
-          550,
-          500,
-          "WAITING FOR PLAYERS",
-          {
-            fontSize: "20px",
-            color: "#ffffff",
-            backgroundColor: "#444444",
-            padding: {
-              left: 20,
-              right: 20,
-              top: 12,
-              bottom: 12
-            }
-          }
-        )
-        .setOrigin(0.5)
-        .setInteractive({
-          useHandCursor: true
-        });
-
-      juiceButton(
+    this.startButton =
+      new UiButton(
         this,
-        this.startButton
-      );
-
-      this.startButton.on(
-        "pointerover",
-        () => {
-
-          const playerList =
-            Array.from(
-              this.players.values()
-            );
-
-          const everyoneReady =
-            playerList.length >= 2 &&
-            playerList.every(
-              player =>
-                player.ready
-            );
-
-          if (everyoneReady) {
-
-            this.startButton.setStyle({
-              backgroundColor:
-                "#338833"
-            });
-          }
+        {
+          x: START_X,
+          y: BUTTONS_Y,
+          width: 289,
+          height: 48,
+          label: "WAITING FOR PLAYERS",
+          fontSize: 16,
+          icon: "people",
+          variant: "neutral"
         }
       );
 
-      this.startButton.on(
-        "pointerout",
-        () => {
+    juiceButton(
+      this,
+      this.startButton
+    );
 
-          this.updateStartButton();
+    this.startButton.on(
+      "pointerdown",
+      () => {
+
+        if (!this.room) {
+          return;
         }
-      );
 
-      this.startButton.on(
-        "pointerdown",
-        () => {
-
-          if (!this.room) {
-            return;
-          }
-
-          const playerList =
-            Array.from(
-              this.players.values()
-            );
-
-          const everyoneReady =
-            playerList.length >= 2 &&
-            playerList.every(
-              player =>
-                player.ready
-            );
-
-          if (!everyoneReady) {
-
-            this.errorText.setText(
-              "Everyone must be ready first."
-            );
-
-            return;
-          }
-
-          console.log(
-            "Host clicked START GAME"
+        const playerList =
+          Array.from(
+            this.players.values()
           );
 
-          this.errorText.setText("");
-
-          this.room.send(
-            "startGame"
+        const everyoneReady =
+          playerList.length >= 2 &&
+          playerList.every(
+            player =>
+              player.ready
           );
+
+        if (!everyoneReady) {
+
+          this.errorText.setText(
+            "Everyone must be ready first."
+          );
+
+          return;
         }
-      );
-    }
+
+        console.log(
+          "Host clicked START GAME"
+        );
+
+        this.errorText.setText("");
+
+        this.room.send(
+          "startGame"
+        );
+      }
+    );
 
     // ----------------------------------------
     // LEAVE BUTTON
     // ----------------------------------------
 
-    const leaveButton =
-      this.add.text(
-        400,
-        570,
-        "LEAVE",
+    this.leaveButton =
+      new UiButton(
+        this,
         {
-          fontSize: "18px",
-          color: "#ffffff",
-          backgroundColor: "#333333",
-          padding: {
-            left: 25,
-            right: 25,
-            top: 8,
-            bottom: 8
-          }
+          x: 400,
+          y: 545,
+          width: 140,
+          height: 36,
+          label: "LEAVE",
+          fontSize: 15,
+          icon: "exit",
+          variant: "neutral",
+          radius: 10
         }
-      )
-      .setOrigin(0.5)
-      .setInteractive({
-        useHandCursor: true
-      });
+      );
 
     juiceButton(
       this,
-      leaveButton
+      this.leaveButton
     );
 
-    leaveButton.on(
-      "pointerover",
-      () => {
-
-        leaveButton.setStyle({
-          backgroundColor:
-            "#555555"
-        });
-      }
-    );
-
-    leaveButton.on(
-      "pointerout",
-      () => {
-
-        leaveButton.setStyle({
-          backgroundColor:
-            "#333333"
-        });
-      }
-    );
-
-    leaveButton.on(
+    this.leaveButton.on(
       "pointerdown",
       async () => {
 
@@ -1938,32 +1992,25 @@ export class LobbyScene extends Phaser.Scene {
   }
 
   // ==========================================
-  // BACK BUTTON
+  // BACK BUTTON (when the room could not be reached)
   // ==========================================
 
   private createBackButton() {
 
     const backButton =
-      this.add.text(
-        400,
-        500,
-        "BACK",
+      new UiButton(
+        this,
         {
-          fontSize: "24px",
-          color: "#ffffff",
-          backgroundColor: "#444444",
-          padding: {
-            left: 30,
-            right: 30,
-            top: 12,
-            bottom: 12
-          }
+          x: 400,
+          y: 500,
+          width: 170,
+          height: 44,
+          label: "BACK",
+          fontSize: 20,
+          icon: "exit",
+          variant: "neutral"
         }
-      )
-      .setOrigin(0.5)
-      .setInteractive({
-        useHandCursor: true
-      });
+      );
 
     juiceButton(
       this,

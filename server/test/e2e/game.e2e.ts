@@ -72,6 +72,16 @@ describe("browser end-to-end (production build)", { skip: skipReason }, () => {
   const click = (gx: number, gy: number) =>
     b.click(rect.x + (gx * rect.w) / 800, rect.y + (gy * rect.w) / 800);
 
+  /** Clicks the middle of a game object, wherever the layout put it. */
+  const clickObject = async (expression: string) => {
+
+    const c = await b.eval<{ x: number; y: number }>(
+      `(() => { const r = ${expression}.getBounds(); return { x: r.centerX, y: r.centerY }; })()`
+    );
+
+    await click(c.x, c.y);
+  };
+
   const sfx = () => b.eval<string[]>("window.__sfx.slice()");
 
   const clearSfx = () => b.eval("window.__sfx.length = 0");
@@ -145,11 +155,17 @@ describe("browser end-to-end (production build)", { skip: skipReason }, () => {
 
     assert.equal(await b.eval("window.__audio.running"), false, "autoplay is locked until the user acts");
 
-    await sleep(800);
+    // The four mascots stand on the floor and hop every couple of seconds
+    // (the backdrop itself is one picture).
+    const pictures = await b.eval<number>(`${scene("MenuScene")}.children.list.filter((c) => c.type === 'Image').length`);
 
-    const tweens = await b.eval<number>(`${scene("MenuScene")}.tweens.getTweens().length`);
+    assert.ok(pictures >= 5, `backdrop and four mascots (${pictures} pictures)`);
 
-    assert.ok(tweens >= 20, `title, drifting blocks and mascots animate (${tweens} tweens)`);
+    await until(
+      async () => (await b.eval<number>(`${scene("MenuScene")}.tweens.getTweens().length`)) >= 1,
+      "something animates (the mascots start hopping)",
+      6000
+    );
 
     await shot("01-menu");
   });
@@ -160,7 +176,7 @@ describe("browser end-to-end (production build)", { skip: skipReason }, () => {
 
   test("Create Room unlocks audio and opens the lobby with a room code", async () => {
 
-    await click(400, 280);
+    await clickObject(`${scene("MenuScene")}.createButton`);
 
     await until(() => b.eval("window.__audio.running"), "audio unlocked by the first click");
     await until(() => b.eval(`${scene("LobbyScene")}.sys.isActive()`), "lobby");
@@ -190,7 +206,7 @@ describe("browser end-to-end (production build)", { skip: skipReason }, () => {
 
   test("clicking READY then START GAME starts the game", async () => {
 
-    await click(250, 500);
+    await clickObject(`${scene("LobbyScene")}.readyButton`);
 
     await until(
       () => b.eval(`${scene("LobbyScene")}.players.get(${scene("LobbyScene")}.room.sessionId)?.ready === true`),
@@ -199,7 +215,7 @@ describe("browser end-to-end (production build)", { skip: skipReason }, () => {
 
     await sleep(300);
 
-    await click(550, 500);
+    await clickObject(`${scene("LobbyScene")}.startButton`);
 
     await until(() => b.eval(`${g}.sys.isActive()`), "game scene", 8000);
 

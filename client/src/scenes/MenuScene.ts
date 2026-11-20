@@ -18,28 +18,55 @@ import {
   sanitizeName
 } from "../shared/profile";
 
-import { OverlayInput } from "../ui/OverlayInput";
-
 import {
   addMuteButton,
   ensurePlayerTexture,
   juiceButton
 } from "../effects";
 
-// Two mascots each side, clear of the buttons.
+import {
+  addBackground,
+  addTitle,
+  drawPanel
+} from "../ui/draw";
+
+import { drawIcon } from "../ui/icons";
+
+import { OverlayInput } from "../ui/OverlayInput";
+
+import {
+  COLOR,
+  FONT_BODY
+} from "../ui/theme";
+
+import { UiButton } from "../ui/UiButton";
+
+// ==========================================
+// THE MENU
+// ==========================================
+//
+// Title, CREATE ROOM / JOIN ROOM, and the player's name and
+// colour. The four mascots hop on the floor below.
+
+// The four players hopping on the floor.
 const MASCOT_X = [
-  120,
-  200,
-  600,
-  680
+  97,
+  179,
+  623,
+  703
 ];
 
-const PLAYER_COLORS = [
+const MASCOT_COLORS = [
   0xff4444,
   0x4488ff,
   0x44cc66,
   0xffcc33
 ];
+
+// The floor starts here; the mascots stand on it.
+const FLOOR_TOP = 431;
+
+const MASCOT_BASE = 443;
 
 export class MenuScene extends Phaser.Scene {
 
@@ -49,6 +76,13 @@ export class MenuScene extends Phaser.Scene {
   // The text box for the player's name (a real <input> over
   // the canvas).
   private nameInput: OverlayInput | null = null;
+
+  // Public so the browser tests can find and click them.
+  createButton!: UiButton;
+
+  joinButton!: UiButton;
+
+  swatches: Phaser.GameObjects.Arc[] = [];
 
   constructor() {
     super("MenuScene");
@@ -64,26 +98,26 @@ export class MenuScene extends Phaser.Scene {
       data?.notice ?? "";
 
     this.nameInput = null;
+
+    this.swatches = [];
   }
 
   create() {
 
     // ----------------------------------------
-    // BACKGROUND
+    // BACKGROUND, FLOOR, MASCOTS
     // ----------------------------------------
 
-    this.cameras.main.setBackgroundColor(
-      "#202020"
-    );
+    addBackground(this);
 
-    this.createBackdrop();
+    this.createFloor();
 
     this.createMascots();
 
     addMuteButton(
       this,
       20,
-      575
+      565
     );
 
     audio.playMusic(
@@ -95,125 +129,97 @@ export class MenuScene extends Phaser.Scene {
     // ----------------------------------------
 
     const title =
-      this.add.text(
-        400,
-        150,
-        "PICO CO-OP",
-        {
-          fontSize: "48px",
-          color: "#ffffff",
-          fontStyle: "bold"
-        }
-      ).setOrigin(0.5);
+      addTitle(
+        this,
+        123,
+        34
+      );
 
-    // Title drops in, then bobs gently.
+    // The title drops in.
 
     title.setAlpha(0);
 
-    title.y = 100;
+    title.y = 93;
 
     this.tweens.add({
 
       targets: title,
 
-      y: 150,
+      y: 123,
 
       alpha: 1,
 
       duration: 600,
 
-      ease: "Bounce.easeOut",
-
-      onComplete: () => {
-
-        this.tweens.add({
-
-          targets: title,
-
-          y: 144,
-
-          scale: 1.03,
-
-          duration: 1400,
-
-          yoyo: true,
-
-          repeat: -1,
-
-          ease: "Sine.easeInOut"
-        });
-      }
+      ease: "Bounce.easeOut"
     });
 
     // ----------------------------------------
-    // CREATE ROOM BUTTON
+    // CREATE ROOM / JOIN ROOM
     // ----------------------------------------
 
-    const createButton =
-      this.add.text(
-        400,
-        280,
-        "CREATE ROOM",
+    this.createButton =
+      new UiButton(
+        this,
         {
-          fontSize: "28px",
-          color: "#ffffff",
-          backgroundColor: "#444444",
-          padding: {
-            left: 30,
-            right: 30,
-            top: 15,
-            bottom: 15
-          }
+          x: 400,
+          y: 248,
+          width: 316,
+          height: 54,
+          label: "CREATE ROOM",
+          fontSize: 21,
+          icon: "plus",
+          layout: "edge",
+          variant: "accent"
         }
-      )
-      .setOrigin(0.5)
-      .setInteractive({
-        useHandCursor: true
+      );
+
+    this.joinButton =
+      new UiButton(
+        this,
+        {
+          x: 400,
+          y: 320,
+          width: 316,
+          height: 54,
+          label: "JOIN ROOM",
+          fontSize: 21,
+          icon: "people",
+          layout: "edge",
+          variant: "neutral"
+        }
+      );
+
+    for (
+      const [button, delay]
+      of [
+        [this.createButton, 250],
+        [this.joinButton, 400]
+      ] as const
+    ) {
+
+      juiceButton(
+        this,
+        button
+      );
+
+      button.setAlpha(0);
+
+      this.tweens.add({
+
+        targets: button,
+
+        alpha: 1,
+
+        duration: 400,
+
+        delay
       });
+    }
 
-    juiceButton(
-      this,
-      createButton
-    );
-
-    createButton.setAlpha(0);
-
-    this.tweens.add({
-
-      targets: createButton,
-
-      alpha: 1,
-
-      duration: 400,
-
-      delay: 250
-    });
-
-    createButton.on(
-      "pointerover",
-      () => {
-        createButton.setStyle({
-          backgroundColor: "#666666"
-        });
-      }
-    );
-
-    createButton.on(
-      "pointerout",
-      () => {
-        createButton.setStyle({
-          backgroundColor: "#444444"
-        });
-      }
-    );
-
-    createButton.on(
+    this.createButton.on(
       "pointerdown",
       () => {
-
-        console.log(
-          "Create room clicked"
-        );
 
         this.scene.start(
           "LobbyScene",
@@ -224,75 +230,9 @@ export class MenuScene extends Phaser.Scene {
       }
     );
 
-    // ----------------------------------------
-    // JOIN ROOM BUTTON
-    // ----------------------------------------
-
-    const joinButton =
-      this.add.text(
-        400,
-        380,
-        "JOIN ROOM",
-        {
-          fontSize: "28px",
-          color: "#ffffff",
-          backgroundColor: "#444444",
-          padding: {
-            left: 40,
-            right: 40,
-            top: 15,
-            bottom: 15
-          }
-        }
-      )
-      .setOrigin(0.5)
-      .setInteractive({
-        useHandCursor: true
-      });
-
-    juiceButton(
-      this,
-      joinButton
-    );
-
-    joinButton.setAlpha(0);
-
-    this.tweens.add({
-
-      targets: joinButton,
-
-      alpha: 1,
-
-      duration: 400,
-
-      delay: 400
-    });
-
-    joinButton.on(
-      "pointerover",
-      () => {
-        joinButton.setStyle({
-          backgroundColor: "#666666"
-        });
-      }
-    );
-
-    joinButton.on(
-      "pointerout",
-      () => {
-        joinButton.setStyle({
-          backgroundColor: "#444444"
-        });
-      }
-    );
-
-    joinButton.on(
+    this.joinButton.on(
       "pointerdown",
       () => {
-
-        console.log(
-          "Join room clicked"
-        );
 
         this.scene.start(
           "LobbyScene",
@@ -328,7 +268,7 @@ export class MenuScene extends Phaser.Scene {
       const notice =
         this.showStatus(
           this.notice,
-          "#ff9999"
+          COLOR.red_
         );
 
       this.time.delayedCall(
@@ -355,27 +295,90 @@ export class MenuScene extends Phaser.Scene {
     const profile =
       loadProfile();
 
-    this.add.text(
-      400,
-      490,
-      "YOUR NAME AND COLOUR",
+    // ---- the heading, with a line on each side ----
+
+    const heading =
+      this.add.text(
+        400,
+        421,
+        "YOUR NAME AND COLOUR",
+        {
+          fontSize: "13px",
+          color: COLOR.textDim
+        }
+      ).setOrigin(0.5);
+
+    const lines =
+      this.add.graphics();
+
+    lines.fillStyle(COLOR.stroke, 0.9);
+
+    lines.fillRect(
+      400 - heading.width / 2 - 70,
+      420,
+      58,
+      1
+    );
+
+    lines.fillRect(
+      400 + heading.width / 2 + 12,
+      420,
+      58,
+      1
+    );
+
+    // ---- the name box ----
+
+    const boxX = 400;
+
+    const boxY = 453;
+
+    const boxWidth = 250;
+
+    const boxHeight = 36;
+
+    const panel =
+      this.add.graphics();
+
+    drawPanel(
+      panel,
+      boxX,
+      boxY,
+      boxWidth,
+      boxHeight,
       {
-        fontSize: "12px",
-        color: "#888888"
+        fill: COLOR.panelDeep,
+        radius: 10
       }
-    ).setOrigin(0.5);
+    );
+
+    // the pencil, on the right inside the box
+    const pencil =
+      this.add.graphics()
+        .setPosition(
+          boxX + boxWidth / 2 - 22,
+          boxY
+        );
+
+    drawIcon(
+      pencil,
+      "pencil",
+      14,
+      0x9aa0c4
+    );
 
     this.nameInput =
       new OverlayInput(
         this.game.canvas,
         {
-          x: 400,
-          y: 516,
-          width: 230,
-          height: 32,
+          x: boxX,
+          y: boxY,
+          width: boxWidth,
+          height: boxHeight,
           value: profile.name,
           placeholder: "Your name",
           maxLength: NAME_MAX,
+          transparent: true,
 
           onInput: (value) => {
 
@@ -398,14 +401,16 @@ export class MenuScene extends Phaser.Scene {
         }
       );
 
-    // colour swatches
+    // ---- the colours ----
 
-    const swatches:
+    this.swatches = [];
+
+    const glows:
       Phaser.GameObjects.Arc[] = [];
 
     const refresh = () => {
 
-      swatches.forEach(
+      this.swatches.forEach(
         (swatch, i) => {
 
           const chosen =
@@ -419,6 +424,8 @@ export class MenuScene extends Phaser.Scene {
           swatch.setScale(
             chosen ? 1.2 : 1
           );
+
+          glows[i].setVisible(chosen);
         }
       );
     };
@@ -426,11 +433,26 @@ export class MenuScene extends Phaser.Scene {
     PALETTE.forEach(
       (color, i) => {
 
+        const x =
+          400 + (i - 3.5) * 36.4;
+
+        // a soft halo, shown behind the chosen one
+        const glow =
+          this.add.circle(
+            x,
+            500,
+            19,
+            color,
+            0.28
+          ).setVisible(false);
+
+        glows.push(glow);
+
         const swatch =
           this.add.circle(
-            400 + (i - 3.5) * 32,
-            556,
-            11,
+            x,
+            500,
+            11.5,
             color
           )
             .setInteractive({
@@ -461,7 +483,7 @@ export class MenuScene extends Phaser.Scene {
           }
         );
 
-        swatches.push(swatch);
+        this.swatches.push(swatch);
       }
     );
 
@@ -480,10 +502,11 @@ export class MenuScene extends Phaser.Scene {
     const text =
       this.add.text(
         400,
-        215,
+        186,
         message,
         {
-          fontSize: "20px",
+          fontFamily: FONT_BODY,
+          fontSize: "17px",
           color,
           align: "center"
         }
@@ -509,7 +532,7 @@ export class MenuScene extends Phaser.Scene {
     const status =
       this.showStatus(
         "Rejoining your game...",
-        "#ffcc66"
+        COLOR.amber_
       );
 
     let room: Room | undefined;
@@ -600,7 +623,7 @@ export class MenuScene extends Phaser.Scene {
           {
             mode: "resume",
 
-            room: joined,
+            room,
 
             resync
           }
@@ -629,7 +652,7 @@ export class MenuScene extends Phaser.Scene {
         );
 
         status.setColor(
-          "#ff9999"
+          COLOR.red_
         );
 
         this.time.delayedCall(
@@ -641,62 +664,33 @@ export class MenuScene extends Phaser.Scene {
   }
 
   // ========================================
-  // BACKDROP
+  // FLOOR
   // ========================================
 
-  // Translucent blocks drifting upwards.
+  private createFloor() {
 
-  private createBackdrop() {
+    const g =
+      this.add.graphics();
 
-    for (let i = 0; i < 16; i++) {
+    g.fillStyle(COLOR.floor, 1);
 
-      const size =
-        10 + Math.random() * 18;
+    g.fillRect(
+      0,
+      FLOOR_TOP,
+      800,
+      600 - FLOOR_TOP
+    );
 
-      const block =
-        this.add.rectangle(
-          Math.random() * 800,
-          Math.random() * 640,
-          size,
-          size,
-          PLAYER_COLORS[i % 4],
-          0.16
-        );
+    // a lighter edge on top, and a pixel-style step at each end
+    g.fillStyle(COLOR.floorEdge, 1);
 
-      block.setDepth(-5);
+    g.fillRect(0, FLOOR_TOP, 800, 3);
 
-      this.tweens.add({
+    g.fillRect(0, FLOOR_TOP - 6, 90, 6);
 
-        targets: block,
+    g.fillRect(710, FLOOR_TOP - 6, 90, 6);
 
-        y: -40,
-
-        duration:
-          9000 + Math.random() * 9000,
-
-        repeat: -1,
-
-        onRepeat: () => {
-
-          block.x =
-            Math.random() * 800;
-
-          block.y = 640;
-        }
-      });
-
-      this.tweens.add({
-
-        targets: block,
-
-        angle: 360,
-
-        duration:
-          6000 + Math.random() * 6000,
-
-        repeat: -1
-      });
-    }
+    g.setDepth(-50);
   }
 
   // ========================================
@@ -707,18 +701,20 @@ export class MenuScene extends Phaser.Scene {
 
   private createMascots() {
 
-    this.add.rectangle(
-      400,
-      510,
-      800,
-      80,
-      0x2a2a2a
-    );
-
-    PLAYER_COLORS.forEach(
+    MASCOT_COLORS.forEach(
       (color, i) => {
 
-        const baseY = 480;
+        const baseY = MASCOT_BASE;
+
+        // a shadow on the floor
+        this.add.ellipse(
+          MASCOT_X[i],
+          baseY + 3,
+          52,
+          10,
+          0x000000,
+          0.35
+        ).setDepth(-40);
 
         const mascot =
           this.add.image(
@@ -728,10 +724,45 @@ export class MenuScene extends Phaser.Scene {
               this,
               color
             )
-          ).setOrigin(
-            0.5,
+          )
+            .setOrigin(0.5, 1)
+            .setDepth(-30);
+
+        // little sparks on the outer two, as in the artwork
+        if (i === 0 || i === 3) {
+
+          const g = this.add.graphics().setDepth(-30);
+
+          const side = i === 0 ? -1 : 1;
+
+          g.lineStyle(
+            3,
+            i === 0
+              ? 0xff6b6b
+              : 0x9be54a,
             1
           );
+
+          const cx =
+            MASCOT_X[i] + side * 34;
+
+          const cy =
+            baseY - 82;
+
+          g.lineBetween(
+            cx - side * 4,
+            cy + 6,
+            cx + side * 6,
+            cy - 6
+          );
+
+          g.lineBetween(
+            cx + side * 5,
+            cy + 8,
+            cx + side * 14,
+            cy
+          );
+        }
 
         const hop = () => {
 

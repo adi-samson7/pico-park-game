@@ -115,7 +115,7 @@ describe("room code copy button and level screens (real browser)", { skip: skipR
 
     assert.equal(await b.eval(`!!${menu}.sys.isActive()`), true);
 
-    await click(400, 280); // CREATE ROOM
+    await clickObject(`${menu}.createButton`);
 
     await until(() => b.eval(`!!${lobby}.roomCode`), "room code");
 

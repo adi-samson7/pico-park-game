@@ -25,6 +25,10 @@ export interface OverlayInputOptions {
 
   maxLength?: number;
 
+  // No background of its own: the game draws the panel
+  // underneath (the box then only adds its edge and text).
+  transparent?: boolean;
+
   // Called on every change with the raw text.
   onInput?: (value: string) => void;
 
@@ -70,13 +74,16 @@ export class OverlayInput {
       zIndex: "10",
       margin: "0",
       padding: "0 8px",
-      background: "#2a2a2a",
+      background:
+        options.transparent
+          ? "transparent"
+          : "#2a2a2a",
       color: "#ffffff",
-      border: "2px solid #555555",
-      borderRadius: "4px",
+      border: "2px solid #363b5a",
+      borderRadius: "10px",
       outline: "none",
       textAlign: "center",
-      fontFamily: "Courier New, Courier, monospace",
+      fontFamily: '"JetBrains Mono", "Courier New", monospace',
       fontWeight: "bold"
     });
 
@@ -102,12 +109,12 @@ export class OverlayInput {
     input.addEventListener("input", () => options.onInput?.(input.value));
 
     input.addEventListener("focus", () => {
-      input.style.borderColor = "#6699ff";
+      input.style.borderColor = "#6a95ff";
     });
 
     input.addEventListener("blur", () => {
 
-      input.style.borderColor = "#555555";
+      input.style.borderColor = "#363b5a";
 
       this.commit();
     });

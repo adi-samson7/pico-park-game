@@ -197,6 +197,7 @@ client/            Phaser game (Vite + TypeScript)
   src/scenes/      Menu, Lobby and Game scenes
   src/audio/       synthesised sound effects + music (no asset files)
   src/net/         prediction, interpolation, ping, session resume, connection overlay
+  src/ui/          look of the menu and lobby: theme, icons, buttons, panels (fonts are bundled)
   src/shared/      copy of the server's physics (see "Bad connections")
   src/effects.ts   particles, confetti, button juice
   src/config.ts    server address
