@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",
+    "prebuild": "node scripts/check-server-url.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

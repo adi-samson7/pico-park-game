@@ -182,7 +182,20 @@ A static host can serve the built client (`client/dist`), but **not the game ser
 2. Build the client with `VITE_SERVER_URL=https://pico-server.onrender.com`. On Vercel set it as an Environment Variable (Root Directory `client`, build command `npm run build`, output `dist`); with Firebase, `VITE_SERVER_URL=... npm --prefix client run build` and deploy `client/dist` as the hosting `public` directory.
 3. The client uses `wss://` automatically for an `https://` server. The server accepts requests from other origins by default; set `CORS_ORIGIN=https://your-site.vercel.app` to restrict the room-code lookup.
 
-`server/test/e2e/hosting.e2e.ts` runs exactly this split (built client on one origin, game server on another) in a real browser.
+### Vercel, step by step
+
+1. **Deploy the game server first** (Render: *New → Blueprint*, pick this repository; `render.yaml` does the rest). Copy its address, e.g. `https://pico-coop.onrender.com`. Check `https://<that address>/health` answers `{"status":"ok",...}`.
+2. In Vercel: **Add New → Project**, import this repository, and set:
+   - **Root Directory:** `client` (everything else is detected from `client/vercel.json`: Vite, `npm run build`, output `dist`)
+   - **Environment Variables:** `VITE_SERVER_URL` = the server address from step 1 (it must be `https://`)
+3. **Deploy.** The client builds by itself: it does not need anything outside `client/`.
+4. Open the Vercel address, create a room, and join it from a second tab.
+
+If `VITE_SERVER_URL` is missing or not `https://`, the Vercel build **stops with a message saying so** (`client/scripts/check-server-url.mjs`). Without that check the game would deploy and then fail on every "Create room", because it would look for its server on the Vercel site. The address is read when the client is **built**: change it in Vercel and redeploy.
+
+What to expect on a free Render server: it goes to sleep when idle (the first visit after a pause takes up to a minute to wake it, and running games are lost when it sleeps), and the leaderboard file is wiped on every deploy and restart (see `DATA_DIR`).
+
+`server/test/e2e/hosting.e2e.ts` runs exactly this split (built client on one origin, game server on another) in a real browser, and `server/test/vercel.test.ts` checks the build guard.
 
 ## Project layout
 
