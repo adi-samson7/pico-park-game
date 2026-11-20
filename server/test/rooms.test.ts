@@ -546,6 +546,9 @@ describe("crystals and the exit door", () => {
     await waitFor(() => host.count("gameFinished") === 1, "game finished");
 
     assert.equal(host.last("gameFinished").result, "win");
-    assert.equal(host.count("levelCompleted"), 2, "the last level ends the game instead");
+    assert.equal(host.count("levelCompleted"), 3, "every level, the last one included, is announced");
+
+    assert.equal(host.last("levelCompleted").final, true);
+    assert.equal(host.last("levelCompleted").nextLevel, null);
   });
 });

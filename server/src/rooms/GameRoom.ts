@@ -127,6 +127,176 @@ export class GameRoom extends Room {
 
   private readonly MAX_LEVELS = 3;
 
+  // ========================================
+  // LEVEL PHASES
+  // ========================================
+  //
+  // A level is not simply "running":
+  //
+  //   intro    "LEVEL N" is shown (3 s). Nobody
+  //            can move yet and no timer runs.
+  //   playing  the level itself. Movement,
+  //            crystals, hazards, the exit and
+  //            the level timer all live here.
+  //   clear    the exit was reached: "LEVEL
+  //            CLEAR" is shown (3 s). Everyone is
+  //            frozen where they stand.
+  //
+  // clear -> (next level loads) -> intro ->
+  // playing -> clear -> ...  After the last
+  // level, clear is followed by the win screen.
+  //
+  // The server decides all of this, so every
+  // player is held and released together.
+
+  private phase: "intro" | "playing" | "clear" =
+    "playing";
+
+  private phaseEndsAt = 0;
+
+  // Bumped on every phase change so a timer
+  // left over from an earlier phase can never
+  // act.
+  private phaseToken = 0;
+
+  // When the current level started being
+  // PLAYED (after its intro); 0 otherwise.
+  // Future timed missions count from here.
+  private levelStartedAt = 0;
+
+  // How long "LEVEL CLEAR" and "LEVEL N" are
+  // shown, in ms. Read when used so tests (and
+  // operators) can change them with
+  // LEVEL_CLEAR_SECONDS / LEVEL_INTRO_SECONDS.
+  private phaseMs(
+    kind: "clear" | "intro"
+  ): number {
+
+    const configured =
+      Number(
+        process.env[
+          kind === "clear"
+            ? "LEVEL_CLEAR_SECONDS"
+            : "LEVEL_INTRO_SECONDS"
+        ]
+      );
+
+    return (
+      Number.isFinite(configured) &&
+      configured >= 0
+        ? configured
+        : 3
+    ) * 1000;
+  }
+
+  // Milliseconds the current level has been
+  // played (0 during intro and clear).
+  private levelElapsedMs(): number {
+
+    return this.levelStartedAt
+      ? Date.now() - this.levelStartedAt
+      : 0;
+  }
+
+  private phaseMsLeft(): number {
+
+    return this.phase === "playing"
+      ? 0
+      : Math.max(
+          0,
+          this.phaseEndsAt - Date.now()
+        );
+  }
+
+  // "LEVEL N": everybody waits, then the level
+  // starts.
+  private beginIntro() {
+
+    const ms =
+      this.phaseMs("intro");
+
+    const token =
+      ++this.phaseToken;
+
+    this.phase =
+      "intro";
+
+    this.phaseEndsAt =
+      Date.now() + ms;
+
+    this.levelStartedAt =
+      0;
+
+    for (
+      const player
+      of this.players.values()
+    ) {
+
+      player.velocityX = 0;
+    }
+
+    this.broadcast(
+      "levelIntro",
+      {
+        level:
+          this.currentLevel,
+
+        maxLevels:
+          this.MAX_LEVELS,
+
+        introMs:
+          ms
+      }
+    );
+
+    this.clock.setTimeout(
+      () => {
+
+        if (
+          token !== this.phaseToken ||
+          !this.gameStarted ||
+          this.gameFinished
+        ) {
+          return;
+        }
+
+        this.beginPlaying();
+      },
+      ms
+    );
+  }
+
+  private beginPlaying() {
+
+    this.phase =
+      "playing";
+
+    ++this.phaseToken;
+
+    this.levelStartedAt =
+      Date.now();
+
+    // Nobody has been sending input while
+    // held: do not count that as silence.
+
+    for (
+      const player
+      of this.players.values()
+    ) {
+
+      player.lastInputAt =
+        this.levelStartedAt;
+    }
+
+    this.broadcast(
+      "levelStarted",
+      {
+        level:
+          this.currentLevel
+      }
+    );
+  }
+
   // Crystals needed to open the exit
   // (set from the level data).
   private targetScore = 10;
@@ -299,7 +469,8 @@ export class GameRoom extends Room {
           !this.gameStarted ||
           this.gameFinished ||
           !player.alive ||
-          !player.connected
+          !player.connected ||
+          this.phase !== "playing"
         ) {
           return;
         }
@@ -1085,6 +1256,15 @@ export class GameRoom extends Room {
       gameFinished:
         this.gameFinished,
 
+      phase:
+        this.phase,
+
+      phaseMsLeft:
+        this.phaseMsLeft(),
+
+      levelElapsedMs:
+        this.levelElapsedMs(),
+
       allReady:
         this.areAllPlayersReady(),
 
@@ -1205,6 +1385,27 @@ export class GameRoom extends Room {
   private updateGame(
     deltaTime: number
   ) {
+
+    // During "LEVEL N" and "LEVEL CLEAR" the
+    // world is held: no movement, no gravity,
+    // no pickups, no hazards, no exit. The
+    // state is still sent so everyone sees the
+    // same picture and the phase.
+
+    if (this.phase !== "playing") {
+
+      for (
+        const player
+        of this.players.values()
+      ) {
+
+        player.velocityX = 0;
+      }
+
+      this.broadcastGameState();
+
+      return;
+    }
 
     const now =
       Date.now();
@@ -1495,23 +1696,43 @@ export class GameRoom extends Room {
 
   private completeLevel() {
 
-    if (
-      this.currentLevel >=
-      this.MAX_LEVELS
-    ) {
-
-      this.finishGame();
-
+    if (this.phase !== "playing") {
       return;
     }
 
     const completedLevel =
       this.currentLevel;
 
-    this.currentLevel++;
+    const last =
+      completedLevel >= this.MAX_LEVELS;
 
-    this.score =
+    const ms =
+      this.phaseMs("clear");
+
+    const elapsedMs =
+      this.levelElapsedMs();
+
+    const token =
+      ++this.phaseToken;
+
+    this.phase =
+      "clear";
+
+    this.phaseEndsAt =
+      Date.now() + ms;
+
+    this.levelStartedAt =
       0;
+
+    // Everyone stops where they stand.
+
+    for (
+      const player
+      of this.players.values()
+    ) {
+
+      player.velocityX = 0;
+    }
 
     this.broadcast(
       "levelCompleted",
@@ -1519,31 +1740,70 @@ export class GameRoom extends Room {
         completedLevel,
 
         nextLevel:
-          this.currentLevel
+          last
+            ? null
+            : completedLevel + 1,
+
+        final:
+          last,
+
+        clearMs:
+          ms,
+
+        // How long the level took to play.
+        elapsedMs
       }
     );
 
-    this.loadLevel(
-      this.currentLevel
-    );
+    this.clock.setTimeout(
+      () => {
 
-    // ----------------------------------------
-    // RESET PLAYERS
-    // ----------------------------------------
+        if (
+          token !== this.phaseToken ||
+          !this.gameStarted ||
+          this.gameFinished
+        ) {
+          return;
+        }
 
-    for (
-      const player
-      of this.players.values()
-    ) {
+        if (last) {
 
-      this.placeAtSpawn(
-        player
-      );
-    }
+          this.finishGame();
 
-    this.broadcast(
-      "levelLoaded",
-      this.levelPayload()
+          return;
+        }
+
+        this.currentLevel++;
+
+        this.score =
+          0;
+
+        this.loadLevel(
+          this.currentLevel
+        );
+
+        // ------------------------------------
+        // RESET PLAYERS
+        // ------------------------------------
+
+        for (
+          const player
+          of this.players.values()
+        ) {
+
+          this.placeAtSpawn(
+            player
+          );
+        }
+
+        this.broadcast(
+          "levelLoaded",
+          this.levelPayload()
+        );
+
+        this.beginIntro();
+      },
+      ms
     );
   }
 
@@ -1559,6 +1819,14 @@ export class GameRoom extends Room {
     this.gameStarted =
       false;
 
+    this.phase =
+      "playing";
+
+    ++this.phaseToken;
+
+    this.levelStartedAt =
+      0;
+
     log(
       "GAME FINISHED - PLAYERS WIN"
     );
@@ -1569,6 +1837,76 @@ export class GameRoom extends Room {
         result:
           "win"
       }
+    );
+
+    // The room carries on as a lobby, so the
+    // same group can play again without
+    // making a new room.
+
+    this.resetToLobby();
+  }
+
+  // ==========================================
+  // BACK TO THE LOBBY (after a finished game)
+  // ==========================================
+  //
+  // Everyone is "not ready" again and the room
+  // is open for newcomers. Players move back
+  // to the lobby screen when they choose to (the
+  // win screen is still up for them); a new game
+  // needs everyone to be ready, so nobody is
+  // dragged into it.
+
+  private resetToLobby() {
+
+    this.gameStarted =
+      false;
+
+    this.gameFinished =
+      false;
+
+    this.currentLevel =
+      1;
+
+    this.score =
+      0;
+
+    this.loadLevel(1);
+
+    for (
+      const player
+      of this.players.values()
+    ) {
+
+      this.placeAtSpawn(
+        player
+      );
+
+      player.ready =
+        false;
+
+      this.broadcast(
+        "playerReadyChanged",
+        {
+          id:
+            player.id,
+
+          ready:
+            false
+        }
+      );
+    }
+
+    this.unlock();
+
+    this.checkAllPlayersReady();
+
+    this.broadcast(
+      "lobbyReopened"
+    );
+
+    log(
+      "BACK IN THE LOBBY"
     );
   }
 
@@ -1623,6 +1961,8 @@ export class GameRoom extends Room {
       "levelLoaded",
       this.levelPayload()
     );
+
+    this.beginIntro();
 
     this.broadcastGameState();
   }
@@ -1853,7 +2193,19 @@ export class GameRoom extends Room {
         // How many players the door waits
         // for (the connected ones).
         playersNeeded:
-          this.connectedPlayers().length
+          this.connectedPlayers().length,
+
+        // "intro" | "playing" | "clear"
+        phase:
+          this.phase,
+
+        phaseMsLeft:
+          this.phaseMsLeft(),
+
+        // Time the level has been played, ms
+        // (0 until the intro is over).
+        levelElapsedMs:
+          this.levelElapsedMs()
       }
     );
   }

@@ -6,6 +6,11 @@ import { createApp, type App } from "../src/app.js";
 // Keep test output readable.
 process.env.LOG_LEVEL = "silent";
 
+// "LEVEL N" / "LEVEL CLEAR" last 3 s in the game. Tests that are not about
+// those screens should not wait for them: tests that are set their own.
+process.env.LEVEL_CLEAR_SECONDS ??= "0.05";
+process.env.LEVEL_INTRO_SECONDS ??= "0.05";
+
 // ==========================================
 // TIMING
 // ==========================================
@@ -87,6 +92,9 @@ export interface GameState {
   doorOpen: boolean;
   playersAtExit: number;
   playersNeeded?: number;
+  phase?: "intro" | "playing" | "clear";
+  phaseMsLeft?: number;
+  levelElapsedMs?: number;
 }
 
 export interface LevelPayload {
@@ -117,6 +125,9 @@ const MESSAGES = [
   "crystalCollected",
   "doorOpened",
   "levelCompleted",
+  "levelIntro",
+  "levelStarted",
+  "lobbyReopened",
   "gameFinished",
   "playerRespawned",
   "startGameFailed",
@@ -139,7 +150,8 @@ export class Bot {
   roomCode = "";
 
   // Every message, in order.
-  events: { type: string; data: any }[] = [];
+  // `at` is when it arrived (ms since the epoch).
+  events: { type: string; data: any; at: number }[] = [];
 
   input: Record<string, unknown> = {};
 
@@ -173,7 +185,7 @@ export class Bot {
 
       room.onMessage(type, (data: any) => {
 
-        this.events.push({ type, data });
+        this.events.push({ type, data, at: Date.now() });
 
         if (type === "gameState") {
           this.state = data;
@@ -320,6 +332,12 @@ export async function startGame(host: Bot, others: Bot[] = []) {
   await waitFor(
     () => [host, ...others].every((b) => b.level && b.me),
     "level + state"
+  );
+
+  // The "LEVEL 1" screen is over and the level is being played.
+  await waitFor(
+    () => serverRoom(host).phase === "playing",
+    "the level intro to end"
   );
 }
 

@@ -19,6 +19,16 @@ Built with **Phaser 3** (client), **Colyseus** + **Node.js** (server), **TypeScr
 3. Everyone clicks **Ready**; the host clicks **Start Game**.
 4. Collect every crystal to unlock the exit, then get **every** player inside the door.
 
+In the lobby, **COPY** (or a click on the code itself) copies the room code to share with friends.
+
+After the last level the room turns back into a lobby: press **ENTER** on the win screen to return to it
+(same room, same code, same host), ready up again and start another round. Newcomers can join the room
+again between rounds.
+
+Between levels the game holds everyone still: **LEVEL CLEAR** (with the time taken) for 3 seconds, then
+the next level loads and **LEVEL N** is shown for 3 seconds. Nobody can move during either screen, and
+the level only starts, along with its timer, once it is over.
+
 ## Run it locally
 
 Requires **Node 22+**.
@@ -57,9 +67,13 @@ npm run typecheck
 | `server/test/rooms.test.ts` | lobby rules, host migration, room locking, input validation, hazards, crystals → door → next level → win |
 | `server/test/reconnect.test.ts` | dropped connections: the seat is held, the player comes back with a full resync, host hand-over, the exit never waits for an absent player, input sequence numbers, latency reports |
 | `server/test/netcode.test.ts` | interpolation, prediction and reconciliation run against the real server physics over simulated latency and jitter (10 ms to 400 ms, 30 to 144 fps, stacking on a player's head), ping bands, session storage |
+| `server/test/intermission.test.ts` | the LEVEL N / LEVEL CLEAR screens: nobody can move, nothing is collected, no timer runs, exact timing, the win after the last clear screen, leaving or reconnecting mid-screen |
+| `server/test/rematch.test.ts` | after the last level: the room is a lobby again (everyone unready, open to newcomers), a new game starts from there and plays like the first, leaving and joining between rounds, winning repeatedly |
+| `server/test/clipboard.test.ts` | copying the room code: clipboard API, fallback for plain http, failure |
 | `server/test/physics-sync.test.ts` | the client's copy of the physics is identical to the server's |
 | `server/test/e2e/game.e2e.ts` | the real UI in Chrome: clicking through menu → lobby → game, sounds, animations, effects |
 | `server/test/e2e/net.e2e.ts` | Chrome playing through a lag proxy: ping chip, prediction vs. a 300 ms round trip, smooth remote players, outages, reload-and-resume, giving up, stale sessions |
+| `server/test/e2e/screens.e2e.ts` | the COPY button on a real clipboard (and its fallback), the LEVEL banners and held controls, reloading during a screen, win → ENTER → lobby → a new game in the same room |
 | `server/test/e2e/hosting.e2e.ts` | the client built for another origin (static host) talking to the game server: CORS, WebSocket, joining by code, resume |
 
 The e2e suite needs `npm run build` first and Chrome/Chromium (set `CHROME_PATH` if it is not found;
@@ -77,6 +91,8 @@ Server environment variables:
 | `CLIENT_DIST` | `../../client/dist` | Directory of the built client to serve |
 | `CORS_ORIGIN` | `*` | `Access-Control-Allow-Origin` for the room lookup endpoint |
 | `LOG_LEVEL` | (info) | `silent` turns off the game log |
+| `LEVEL_CLEAR_SECONDS` | `3` | How long "LEVEL CLEAR" is shown |
+| `LEVEL_INTRO_SECONDS` | `3` | How long "LEVEL N" is shown before a level starts |
 | `RECONNECT_WINDOW_SECONDS` | `30` | How long a player whose connection dropped keeps their seat (see [Bad connections](#bad-connections)) |
 
 Client build-time variable:
@@ -125,6 +141,12 @@ The server is authoritative, so a laggy or flaky connection must not make the ga
 | **Who has a bad connection?** | A ping chip (bottom right) and a ping under every player's colour chip, green below 80 ms, yellow below 160 ms, red above. |
 
 Leaving on purpose (LEAVE, or ENTER after winning) is never held: it frees the seat immediately.
+
+### For timed missions
+
+The server owns the level phase (`intro`, `playing`, `clear`). Anything that counts time should count from
+`levelElapsedMs` in the game state (or the `levelStarted` message): it is 0 during both screens and starts
+when play starts. `levelCompleted` reports `elapsedMs`, how long the level was played.
 
 Switches for comparing and testing (append to the URL):
 

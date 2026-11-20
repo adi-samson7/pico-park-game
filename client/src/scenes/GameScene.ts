@@ -63,6 +63,11 @@ interface PlayerData {
   ack?: number;
 }
 
+// "intro": LEVEL N is shown, "clear": LEVEL
+// CLEAR is shown (both: nobody can move),
+// "playing": the level is on.
+type LevelPhase = "intro" | "playing" | "clear";
+
 // Everything needed to rebuild a client's
 // picture after it missed messages.
 interface ResyncData {
@@ -78,6 +83,10 @@ interface ResyncData {
   players: PlayerData[];
 
   level: LevelData | null;
+
+  phase?: LevelPhase;
+
+  phaseMsLeft?: number;
 }
 
 interface PlatformData {
@@ -192,6 +201,11 @@ interface GameState {
 
   // How many players the door waits for.
   playersNeeded?: number;
+
+  phase?: LevelPhase;
+
+  // Time the level has been played (ms).
+  levelElapsedMs?: number;
 }
 
 // ==========================================
@@ -208,6 +222,30 @@ export class GameScene extends Phaser.Scene {
 
   // Ping chip, "connection lost" veil.
   private hud: ConnectionHud | null = null;
+
+  // ========================================
+  // LEVEL SCREENS
+  // ========================================
+  //
+  // "LEVEL CLEAR" and "LEVEL N" are driven by
+  // the server (which also holds everyone
+  // still): the scene only mirrors its phase.
+
+  private phase: LevelPhase = "playing";
+
+  private bannerVeil:
+    Phaser.GameObjects.Rectangle | null =
+    null;
+
+  private bannerTitle:
+    Phaser.GameObjects.Text | null =
+    null;
+
+  private bannerSub:
+    Phaser.GameObjects.Text | null =
+    null;
+
+  private bannerVisible = false;
 
   // Runs the shared physics on the local
   // player for instant response (see
@@ -421,6 +459,11 @@ export class GameScene extends Phaser.Scene {
     this.playerFx = new Map();
     this.shownLevel = 0;
     this.hud = null;
+    this.phase = "playing";
+    this.bannerVeil = null;
+    this.bannerTitle = null;
+    this.bannerSub = null;
+    this.bannerVisible = false;
     this.predictor = null;
     this.snapshots = new Map();
     this.ghostLabels = new Map();
@@ -489,6 +532,8 @@ export class GameScene extends Phaser.Scene {
     this.createInput();
 
     this.createUI();
+
+    this.createBanner();
 
     this.createGround();
 
@@ -1726,7 +1771,10 @@ export class GameScene extends Phaser.Scene {
       (
         data: {
           completedLevel: number;
-          nextLevel: number;
+          nextLevel: number | null;
+          final?: boolean;
+          clearMs?: number;
+          elapsedMs?: number;
         }
       ) => {
 
@@ -1747,11 +1795,59 @@ export class GameScene extends Phaser.Scene {
           255
         );
 
-        this.showTemporaryMessage(
-          `LEVEL ${
-            data.completedLevel
-          } COMPLETE!`,
-          1200
+        // "LEVEL CLEAR" stays up until the
+        // server starts the next screen.
+
+        this.setPhase(
+          "clear",
+          {
+            level:
+              data.completedLevel,
+
+            elapsedMs:
+              data.elapsedMs
+          }
+        );
+      }
+    );
+
+    // --------------------------------------
+    // "LEVEL N" SCREEN, THEN PLAY
+    // --------------------------------------
+
+    this.room.onMessage(
+      "levelIntro",
+      (
+        data: {
+          level: number;
+        }
+      ) => {
+
+        this.setPhase(
+          "intro",
+          {
+            level:
+              data.level
+          }
+        );
+      }
+    );
+
+    this.room.onMessage(
+      "levelStarted",
+      () => {
+
+        if (
+          this.phase !== "playing"
+        ) {
+
+          audio.sfx(
+            "ready"
+          );
+        }
+
+        this.setPhase(
+          "playing"
         );
       }
     );
@@ -1788,6 +1884,10 @@ export class GameScene extends Phaser.Scene {
         this.gameFinished =
           true;
 
+        this.setPhase(
+          "playing"
+        );
+
         audio.stopMusic();
 
         audio.sfx(
@@ -1800,7 +1900,7 @@ export class GameScene extends Phaser.Scene {
         );
 
         this.showPersistentMessage(
-          "YOU WIN!\n\nALL LEVELS COMPLETE\n\nPress ENTER to return to the menu"
+          "YOU WIN!\n\nALL LEVELS COMPLETE\n\nPress ENTER to go back to the lobby"
         );
 
         this.statusText.setText(
@@ -2008,6 +2108,237 @@ export class GameScene extends Phaser.Scene {
   }
 
   // ========================================
+  // LEVEL SCREENS ("LEVEL CLEAR" / "LEVEL N")
+  // ========================================
+
+  private createBanner() {
+
+    this.bannerVeil =
+      this.add.rectangle(
+        400,
+        300,
+        800,
+        600,
+        0x000000,
+        0.6
+      )
+        .setDepth(500)
+        .setVisible(false);
+
+    this.bannerTitle =
+      this.add.text(
+        400,
+        270,
+        "",
+        {
+          fontSize: "76px",
+          color: "#ffffff",
+          fontStyle: "bold",
+          stroke: "#000000",
+          strokeThickness: 8
+        }
+      )
+        .setOrigin(0.5)
+        .setDepth(501)
+        .setVisible(false);
+
+    this.bannerSub =
+      this.add.text(
+        400,
+        345,
+        "",
+        {
+          fontSize: "26px",
+          color: "#dddddd"
+        }
+      )
+        .setOrigin(0.5)
+        .setDepth(501)
+        .setVisible(false);
+  }
+
+  private showBanner(
+    title: string,
+    sub: string,
+    color: string
+  ) {
+
+    if (
+      !this.bannerVeil ||
+      !this.bannerTitle ||
+      !this.bannerSub
+    ) {
+      return;
+    }
+
+    this.bannerTitle.setText(title);
+
+    this.bannerTitle.setColor(color);
+
+    this.bannerSub.setText(sub);
+
+    // Only pop in when it appears; a text
+    // update while it is up changes nothing
+    // else.
+
+    if (this.bannerVisible) {
+      return;
+    }
+
+    this.bannerVisible = true;
+
+    for (
+      const item
+      of [
+        this.bannerVeil,
+        this.bannerTitle,
+        this.bannerSub
+      ]
+    ) {
+
+      this.tweens.killTweensOf(item);
+
+      item.setVisible(true);
+    }
+
+    this.bannerVeil.setAlpha(0);
+
+    this.tweens.add({
+      targets: this.bannerVeil,
+      alpha: 0.6,
+      duration: 250
+    });
+
+    for (
+      const item
+      of [
+        this.bannerTitle,
+        this.bannerSub
+      ]
+    ) {
+
+      item.setAlpha(1);
+
+      item.setScale(0.5);
+
+      this.tweens.add({
+        targets: item,
+        scaleX: 1,
+        scaleY: 1,
+        duration: 350,
+        ease: "Back.easeOut"
+      });
+    }
+  }
+
+  private hideBanner() {
+
+    if (!this.bannerVisible) {
+      return;
+    }
+
+    this.bannerVisible = false;
+
+    const items = [
+      this.bannerVeil,
+      this.bannerTitle,
+      this.bannerSub
+    ];
+
+    for (const item of items) {
+
+      if (!item) {
+        continue;
+      }
+
+      this.tweens.killTweensOf(item);
+
+      this.tweens.add({
+        targets: item,
+        alpha: 0,
+        duration: 200,
+        onComplete: () => {
+
+          // A newer banner may have started.
+          if (!this.bannerVisible) {
+            item.setVisible(false);
+          }
+        }
+      });
+    }
+  }
+
+  // Follows the server: while "intro" or
+  // "clear" is on, the banner is up and the
+  // players cannot move.
+
+  private setPhase(
+    phase: LevelPhase,
+    info: {
+      level?: number;
+      elapsedMs?: number;
+    } = {}
+  ) {
+
+    const changed =
+      phase !== this.phase;
+
+    this.phase = phase;
+
+    if (phase === "playing") {
+
+      if (changed) {
+
+        this.hideBanner();
+
+        // The world was held still: guess the
+        // movement again from the server's
+        // next state.
+        this.predictor?.reset();
+      }
+
+      return;
+    }
+
+    // The server's state repeats the phase every
+    // tick without the details (time taken): do
+    // not wipe what the message already showed.
+
+    if (
+      phase === "clear" &&
+      !info.elapsedMs &&
+      this.bannerVisible
+    ) {
+      return;
+    }
+
+    const title =
+      phase === "clear"
+        ? "LEVEL CLEAR"
+        : `LEVEL ${
+            info.level ??
+            (this.shownLevel || 1)
+          }`;
+
+    const sub =
+      phase === "clear"
+        ? info.elapsedMs
+          ? `Time ${(
+              info.elapsedMs / 1000
+            ).toFixed(1)} s`
+          : ""
+        : "Get ready!";
+
+    this.showBanner(
+      title,
+      sub,
+      phase === "clear"
+        ? "#66ff88"
+        : "#ffffff"
+    );
+  }
+
+  // ========================================
   // CONNECTION
   // ========================================
 
@@ -2112,6 +2443,13 @@ export class GameScene extends Phaser.Scene {
     this.predictor?.reset();
 
     this.snapshots.clear();
+
+    this.setPhase(
+      data.phase ?? "playing",
+      {
+        level: data.level?.level
+      }
+    );
 
     // Rebuild the roster chips.
 
@@ -2239,6 +2577,33 @@ export class GameScene extends Phaser.Scene {
   // RETURN TO MENU
   // ========================================
 
+  // After the last level the room is a lobby
+  // again (the server reset everyone to "not
+  // ready"): go there to play another round
+  // with the same people.
+
+  private returnToLobby() {
+
+    if (this.leaving) {
+      return;
+    }
+
+    this.leaving = true;
+
+    this.scene.start(
+      "LobbyScene",
+      {
+        mode: "resume",
+
+        room:
+          this.room,
+
+        statusMessage:
+          "Good game! Ready up for another round."
+      }
+    );
+  }
+
   private returnToMenu(
     leaveRoom: boolean,
     notice?: string
@@ -2299,6 +2664,13 @@ export class GameScene extends Phaser.Scene {
     // --------------------------------------
     // PLAYERS
     // --------------------------------------
+
+    this.setPhase(
+      state.phase ?? "playing",
+      {
+        level: state.level
+      }
+    );
 
     this.predictor?.setOthers(
       state.players as NetPlayer[]
@@ -2453,6 +2825,7 @@ export class GameScene extends Phaser.Scene {
 
     return (
       NET_SETTINGS.predict &&
+      this.phase === "playing" &&
       !this.gameFinished &&
       !this.hud?.offline &&
       this.predictor?.body != null
@@ -3531,9 +3904,7 @@ export class GameScene extends Phaser.Scene {
         )
       ) {
 
-        this.returnToMenu(
-          true
-        );
+        this.returnToLobby();
       }
 
       return;
@@ -3544,6 +3915,13 @@ export class GameScene extends Phaser.Scene {
     // replay a burst of it later: wait instead.
 
     if (this.hud?.offline) {
+      return;
+    }
+
+    // "LEVEL CLEAR" / "LEVEL N": nobody can
+    // move (the server ignores input too).
+
+    if (this.phase !== "playing") {
       return;
     }
 
@@ -3641,6 +4019,23 @@ export class GameScene extends Phaser.Scene {
     this.hud?.dispose();
 
     this.hud = null;
+
+    for (
+      const item
+      of [
+        this.bannerVeil,
+        this.bannerTitle,
+        this.bannerSub
+      ]
+    ) {
+
+      item?.destroy();
+    }
+
+    this.bannerVeil = null;
+    this.bannerTitle = null;
+    this.bannerSub = null;
+    this.bannerVisible = false;
 
     this.predictor = null;
 

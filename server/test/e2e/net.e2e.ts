@@ -550,16 +550,19 @@ describe("netcode in a real browser (laggy network)", { skip: skipReason }, () =
 
     assert.ok((await localX()) < before - 40, "the player walks again");
 
-    // and the server saw it
-    await sleep(400);
+    // and the server saw it: once the last inputs have arrived and been
+    // checked, the picture and the server agree (given a moment, not a fixed
+    // number of milliseconds: a busy machine delays the last state)
+    assert.equal(serverPlayer(roomId, id).connected, true);
 
-    const server = serverPlayer(roomId, id);
-
-    assert.equal(server.connected, true);
-
-    const shown = await b.eval<number>(`${game}.localPlayer.x`);
-
-    assert.ok(Math.abs(shown - server.x) < 4, `picture ${shown.toFixed(1)} vs server ${server.x.toFixed(1)}`);
+    await until(
+      async () => {
+        const shown = await b.eval<number>(`${game}.localPlayer.x`);
+        return Math.abs(shown - serverPlayer(roomId, id).x) < 3;
+      },
+      "the picture agrees with the server",
+      4000
+    );
 
     const errors = b.logs.filter((l) => l.type === "exception");
 

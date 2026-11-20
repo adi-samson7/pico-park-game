@@ -4,6 +4,22 @@ import { NetworkManager } from "../network/NetworkManager";
 import { audio } from "../audio/AudioManager";
 import { ConnectionHud } from "../net/ConnectionHud";
 import { tabSession } from "../net/session";
+import { copyToClipboard } from "../net/clipboard";
+import { QUALITY_COLORS, qualityOf } from "../net/latency";
+
+// Roster table (game coordinates).
+const ROW_TOP = 275;
+const ROW_STEP = 50;
+const ROW_WIDTH = 580;
+const ROW_HEIGHT = 40;
+const COL_DOT = 138;
+const COL_NAME = 162;
+const COL_STATUS = 482;
+const COL_PING = 676;
+const SLOTS = 4;
+
+const hex = (color: number) =>
+  "#" + color.toString(16).padStart(6, "0");
 import {
   addMuteButton,
   juiceButton
@@ -45,6 +61,11 @@ export class LobbyScene extends Phaser.Scene {
 
   private resumeData: ResyncData | null = null;
 
+  // Shown instead of "Back in your room!" when
+  // the game scene sends everyone back here
+  // after a finished game.
+  private statusMessage = "";
+
   // Ping chip and "connection lost" veil.
   private hud: ConnectionHud | null = null;
 
@@ -82,6 +103,13 @@ export class LobbyScene extends Phaser.Scene {
   private roomCodeText!:
     Phaser.GameObjects.Text;
 
+  // "COPY" next to the room code.
+  private copyButton:
+    Phaser.GameObjects.Text | null = null;
+
+  private copyResetTimer:
+    Phaser.Time.TimerEvent | null = null;
+
   private errorText!:
     Phaser.GameObjects.Text;
 
@@ -98,9 +126,13 @@ export class LobbyScene extends Phaser.Scene {
       mode: "create" | "join" | "resume";
       room?: Room;
       resync?: ResyncData;
+      statusMessage?: string;
     }
   ) {
     this.mode = data.mode;
+
+    this.statusMessage =
+      data.statusMessage ?? "";
 
     this.resumeRoom = data.room ?? null;
 
@@ -109,6 +141,10 @@ export class LobbyScene extends Phaser.Scene {
     this.hud = null;
 
     this.unsubs = [];
+
+    this.copyButton = null;
+
+    this.copyResetTimer = null;
 
     this.players = new Map();
 
@@ -197,6 +233,69 @@ export class LobbyScene extends Phaser.Scene {
       ).setOrigin(0.5);
 
     // ----------------------------------------
+    // COPY ROOM CODE
+    // ----------------------------------------
+    //
+    // Appears once the code is known. Clicking
+    // it (or the code itself) copies the code
+    // so it can be pasted to friends.
+
+    this.copyButton =
+      this.add.text(
+        548,
+        190,
+        "COPY",
+        {
+          fontSize: "16px",
+          color: "#ffffff",
+          backgroundColor: "#446688",
+
+          // A fixed width, so the button does not
+          // change size (and shove the code
+          // aside) when it says COPIED!
+          fixedWidth: 130,
+          align: "center",
+
+          padding: {
+            left: 0,
+            right: 0,
+            top: 6,
+            bottom: 6
+          }
+        }
+      )
+        .setOrigin(0, 0.5)
+        .setVisible(false)
+        .setInteractive({
+          useHandCursor: true
+        });
+
+    this.layoutRoomCode();
+
+    juiceButton(
+      this,
+      this.copyButton
+    );
+
+    this.copyButton.on(
+      "pointerdown",
+      () => {
+        void this.copyRoomCode();
+      }
+    );
+
+    this.roomCodeText.setInteractive({
+      useHandCursor: true
+    });
+
+    this.roomCodeText.on(
+      "pointerdown",
+      () => {
+        void this.copyRoomCode();
+      }
+    );
+
+    // ----------------------------------------
     // ERROR
     // ----------------------------------------
 
@@ -236,7 +335,8 @@ export class LobbyScene extends Phaser.Scene {
           this.room;
 
         this.statusText.setText(
-          "Back in your room!"
+          this.statusMessage ||
+            "Back in your room!"
         );
       }
 
@@ -372,10 +472,18 @@ export class LobbyScene extends Phaser.Scene {
           `ROOM CODE: ${data.roomCode}`
         );
 
+        this.layoutRoomCode();
+
         tabSession.remember(
           this.room.reconnectionToken,
           data.roomCode
         );
+
+        this.copyButton?.setVisible(
+          true
+        );
+
+        this.layoutRoomCode();
       }
     );
 
@@ -678,6 +786,137 @@ export class LobbyScene extends Phaser.Scene {
   }
 
   // ==========================================
+  // ROOM CODE LAYOUT
+  // ==========================================
+
+  // The code and its COPY button are centred
+  // as one group.
+
+  private layoutRoomCode() {
+
+    if (!this.roomCodeText) {
+      return;
+    }
+
+    const gap = 16;
+
+    const codeWidth =
+      this.roomCodeText.width;
+
+    const showCopy =
+      !!this.copyButton?.visible;
+
+    const total =
+      codeWidth +
+      (showCopy
+        ? gap + this.copyButton!.width
+        : 0);
+
+    const left =
+      400 - total / 2;
+
+    this.roomCodeText
+      .setOrigin(0, 0.5)
+      .setPosition(left, 190);
+
+    this.copyButton
+      ?.setOrigin(0, 0.5)
+      .setPosition(
+        left + codeWidth + gap,
+        190
+      );
+  }
+
+  // ==========================================
+  // COPY ROOM CODE
+  // ==========================================
+
+  private async copyRoomCode() {
+
+    if (
+      !this.roomCode ||
+      !this.copyButton
+    ) {
+      return;
+    }
+
+    const copied =
+      await copyToClipboard(
+        this.roomCode
+      );
+
+    // The scene may have changed while the
+    // browser was deciding.
+
+    if (
+      !this.copyButton ||
+      !this.copyButton.active
+    ) {
+      return;
+    }
+
+    audio.sfx(
+      copied
+        ? "ready"
+        : "unready"
+    );
+
+    this.copyButton.setText(
+      copied
+        ? "COPIED!"
+        : "PRESS CTRL+C"
+    );
+
+    this.copyButton.setStyle({
+      backgroundColor:
+        copied
+          ? "#226622"
+          : "#884422"
+    });
+
+    // Nothing could be copied (clipboard
+    // blocked): select the code for the
+    // player instead of failing silently.
+
+    if (!copied) {
+
+      this.errorText.setText(
+        `Room code: ${this.roomCode}`
+      );
+    }
+
+    this.copyResetTimer?.remove(
+      false
+    );
+
+    this.copyResetTimer =
+      this.time.delayedCall(
+        1800,
+        () => {
+
+          if (
+            !this.copyButton?.active
+          ) {
+            return;
+          }
+
+          this.copyButton.setText(
+            "COPY"
+          );
+
+          this.copyButton.setStyle({
+            backgroundColor:
+              "#446688"
+          });
+
+          if (!copied) {
+            this.errorText.setText("");
+          }
+        }
+      );
+  }
+
+  // ==========================================
   // LISTENERS
   // ==========================================
 
@@ -767,6 +1006,12 @@ export class LobbyScene extends Phaser.Scene {
       `ROOM CODE: ${data.roomCode}`
     );
 
+    this.copyButton?.setVisible(
+      true
+    );
+
+    this.layoutRoomCode();
+
     tabSession.remember(
       this.room.reconnectionToken,
       data.roomCode
@@ -842,15 +1087,15 @@ export class LobbyScene extends Phaser.Scene {
       of this.playerTexts.values()
     ) {
 
-      const indicator =
+      const extras =
         text.getData(
-          "indicator"
+          "extras"
         ) as
-          | Phaser.GameObjects.Arc
+          | Phaser.GameObjects.GameObject[]
           | undefined;
 
-      if (indicator) {
-        indicator.destroy();
+      for (const extra of extras ?? []) {
+        extra.destroy();
       }
 
       text.destroy();
@@ -858,19 +1103,68 @@ export class LobbyScene extends Phaser.Scene {
 
     this.playerTexts.clear();
 
-    const sortedPlayers =
-      Array.from(
-        this.players.values()
-      ).sort(
-        (a, b) =>
-          a.playerIndex -
-          b.playerIndex
-      );
+    // One row per seat, taken or not: the
+    // table keeps its shape and shows how many
+    // players fit.
 
-    for (
-      const player
-      of sortedPlayers
-    ) {
+    for (let slot = 0; slot < SLOTS; slot++) {
+
+      const player =
+        Array.from(
+          this.players.values()
+        ).find(
+          candidate =>
+            candidate.playerIndex === slot
+        );
+
+      const y =
+        ROW_TOP + slot * ROW_STEP;
+
+      const extras:
+        Phaser.GameObjects.GameObject[] =
+        [];
+
+      // ---- empty seat ----
+
+      if (!player) {
+
+        extras.push(
+          this.add.rectangle(
+            400,
+            y,
+            ROW_WIDTH,
+            ROW_HEIGHT,
+            0x262626,
+            0.6
+          ).setDepth(-1)
+        );
+
+        const empty =
+          this.add.text(
+            COL_NAME,
+            y,
+            "waiting for player...",
+            {
+              fontSize: "18px",
+              color: "#555555",
+              fontStyle: "italic"
+            }
+          ).setOrigin(0, 0.5);
+
+        empty.setData(
+          "extras",
+          extras
+        );
+
+        this.playerTexts.set(
+          `empty-${slot}`,
+          empty
+        );
+
+        continue;
+      }
+
+      // ---- a player ----
 
       const away =
         player.connected === false;
@@ -882,12 +1176,12 @@ export class LobbyScene extends Phaser.Scene {
             ? "READY"
             : "NOT READY";
 
-      const textColor =
+      const statusColor =
         away
           ? "#ffcc66"
           : player.ready
             ? "#66ff66"
-            : "#aaaaaa";
+            : "#999999";
 
       const rtt =
         away
@@ -918,38 +1212,99 @@ export class LobbyScene extends Phaser.Scene {
           " (YOU)";
       }
 
+      // row background (yours is outlined)
+
+      const background =
+        this.add.rectangle(
+          400,
+          y,
+          ROW_WIDTH,
+          ROW_HEIGHT,
+          0x2e2e2e,
+          0.95
+        ).setDepth(-1);
+
+      if (isMe) {
+
+        background.setStrokeStyle(
+          2,
+          0x6699ff
+        );
+      }
+
+      extras.push(background);
+
+      // colour dot, centred on the row
+
+      extras.push(
+        this.add.circle(
+          COL_DOT,
+          y,
+          9,
+          player.color
+        )
+      );
+
+      // name
+
       const text =
         this.add.text(
-          400,
-          275 +
-            player.playerIndex * 50,
-          `${playerName}    ${status}${
-            rtt === null
-              ? ""
-              : `    ${rtt} ms`
-          }`,
+          COL_NAME,
+          y,
+          playerName,
           {
             fontSize: "21px",
-            color: textColor,
+            color:
+              isMe
+                ? "#ffffff"
+                : "#cccccc",
             fontStyle:
               isMe
                 ? "bold"
                 : "normal"
           }
-        ).setOrigin(0.5);
+        ).setOrigin(0, 0.5);
 
-      const indicator =
-        this.add.circle(
-          175,
-          287 +
-            player.playerIndex * 50,
-          8,
-          player.color
+      // status, in its own column
+
+      extras.push(
+        this.add.text(
+          COL_STATUS,
+          y,
+          status,
+          {
+            fontSize: "19px",
+            color: statusColor,
+            fontStyle: "bold"
+          }
+        ).setOrigin(0, 0.5)
+      );
+
+      // ping, right-aligned, coloured by quality
+
+      if (rtt !== null) {
+
+        extras.push(
+          this.add.text(
+            COL_PING,
+            y,
+            `${rtt} ms`,
+            {
+              fontSize: "16px",
+              color:
+                hex(
+                  QUALITY_COLORS[
+                    qualityOf(rtt)
+                  ]
+                )
+            }
+          ).setOrigin(1, 0.5)
         );
+      }
 
       text.setData(
-        "indicator",
-        indicator
+        "extras",
+        extras
       );
 
       this.playerTexts.set(
@@ -1028,6 +1383,15 @@ export class LobbyScene extends Phaser.Scene {
 
     this.startButton.setVisible(
       isHost
+    );
+
+    // Alone, READY sits in the middle; next to
+    // START it takes the left side.
+
+    this.readyButton?.setX(
+      isHost
+        ? 250
+        : 400
     );
 
     if (!isHost) {
@@ -1399,15 +1763,15 @@ export class LobbyScene extends Phaser.Scene {
       of this.playerTexts.values()
     ) {
 
-      const indicator =
+      const extras =
         text.getData(
-          "indicator"
+          "extras"
         ) as
-          | Phaser.GameObjects.Arc
+          | Phaser.GameObjects.GameObject[]
           | undefined;
 
-      if (indicator) {
-        indicator.destroy();
+      for (const extra of extras ?? []) {
+        extra.destroy();
       }
 
       text.destroy();
@@ -1430,6 +1794,14 @@ export class LobbyScene extends Phaser.Scene {
     if (this.roomCodeText) {
       this.roomCodeText.destroy();
     }
+
+    this.copyResetTimer?.remove(
+      false
+    );
+
+    this.copyButton?.destroy();
+
+    this.copyButton = null;
 
     if (this.errorText) {
       this.errorText.destroy();

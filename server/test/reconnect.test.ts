@@ -481,22 +481,28 @@ describe("reconnecting during a game", () => {
     assert.equal(host.count("playerLeft"), 0);
   });
 
-  test("a finished game does not hold seats", async () => {
+  test("after a win the room is a lobby again, so a dropped player's seat is held like any other", async () => {
 
     const { host, others } = await game(2);
 
-    serverRoom(host).gameFinished = true;
+    const guest = others[0];
 
-    others[0].room.reconnection.enabled = false;
+    // The last level has just been cleared.
+    serverRoom(host).finishGame();
 
-    others[0].drop();
+    await waitFor(() => host.count("gameFinished") === 1, "win announced");
 
-    await waitFor(
-      () => host.events.find((e) => e.type === "playerLeft"),
-      "left at once"
-    );
+    await dropAndWait(host, guest);
 
-    assert.equal(host.count("playerDropped"), 0);
+    assert.equal(host.count("playerLeft"), 0, "seat held, not released");
+
+    await reconnected(guest);
+
+    const resync = await waitFor(() => guest.last("resync"), "resync");
+
+    assert.equal(resync.gameStarted, false, "they come back to a lobby");
+    assert.equal(resync.level, null);
+    assert.equal(resync.players.every((p: any) => p.ready === false), true);
   });
 });
 

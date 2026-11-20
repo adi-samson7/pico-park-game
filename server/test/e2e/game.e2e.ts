@@ -14,6 +14,8 @@ import { after, before, describe, test } from "node:test";
 
 import type { App } from "../../src/app.js";
 
+import { matchMaker } from "colyseus";
+
 import { Bot, clientFor, startApp, waitFor } from "../helpers.js";
 
 import { Browser, findChrome, sleep } from "./browser.js";
@@ -498,12 +500,24 @@ describe("browser end-to-end (production build)", { skip: skipReason }, () => {
     assert.equal(await emitters(), 0);
   });
 
-  test("ENTER leaves the win screen for the menu and restarts the menu music", async () => {
+  test("ENTER on the win screen goes back to the lobby of the same room and restarts the menu music", async () => {
+
+    // The win above was a message injected into the page; make the server
+    // finish the game for real, as it does when the last level is cleared
+    // (it turns the room back into a lobby).
+    const roomId = await b.eval<string>(`${g}.room.roomId`);
+
+    (matchMaker.getLocalRoomById(roomId) as any).finishGame();
+
+    await sleep(300);
 
     await b.tap("Enter", "Enter", 60);
 
-    await until(() => b.eval(`${scene("MenuScene")}.sys.isActive()`), "menu");
+    await until(() => b.eval(`${scene("LobbyScene")}.sys.isActive()`), "lobby");
     await until(() => b.eval("window.__audio.activeMusic === 'menu'"), "menu music");
+
+    assert.equal(await b.eval(`${scene("LobbyScene")}.room.roomId`), roomId, "still in the same room");
+    assert.equal(await b.eval(`${scene("MenuScene")}.sys.isActive()`), false, "not thrown out to the menu");
   });
 
   test("the whole session produced no console errors or exceptions", () => {
