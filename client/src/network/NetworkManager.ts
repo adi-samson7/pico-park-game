@@ -18,6 +18,13 @@ import { NET_SETTINGS } from "../net/settings";
 // ... up to 5 s) ten attempts take about half a
 // minute, which matches the 30 s the server
 // holds a dropped player's seat.
+// The player's choices, sent when joining (the server
+// checks them and has the last word): see profile.ts.
+export interface JoinOptions {
+  name?: string;
+  color?: number;
+}
+
 export const RECONNECT_ATTEMPTS =
   NET_SETTINGS.reconnectAttempts;
 
@@ -60,7 +67,9 @@ export class NetworkManager {
   // CREATE ROOM
   // ==========================================
 
-  async createRoom(): Promise<Room> {
+  async createRoom(
+    profile: JoinOptions = {}
+  ): Promise<Room> {
 
     console.log(
       "Creating room..."
@@ -68,7 +77,8 @@ export class NetworkManager {
 
     this.room =
       await this.client.create(
-        "game"
+        "game",
+        profile
       );
 
     prepareRoom(
@@ -147,7 +157,8 @@ export class NetworkManager {
   // ==========================================
 
   async joinRoomByCode(
-    roomCode: string
+    roomCode: string,
+    profile: JoinOptions = {}
   ): Promise<Room> {
 
     const roomId =
@@ -156,7 +167,8 @@ export class NetworkManager {
       );
 
     return this.joinRoomById(
-      roomId
+      roomId,
+      profile
     );
   }
 
@@ -165,7 +177,8 @@ export class NetworkManager {
   // ==========================================
 
   async joinRoomById(
-    roomId: string
+    roomId: string,
+    profile: JoinOptions = {}
   ): Promise<Room> {
 
     console.log(
@@ -175,7 +188,8 @@ export class NetworkManager {
 
     this.room =
       await this.client.joinById(
-        roomId
+        roomId,
+        profile
       );
 
     prepareRoom(

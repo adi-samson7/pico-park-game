@@ -10,6 +10,13 @@ import { WebSocketTransport } from "@colyseus/ws-transport";
 import { GameRoom } from "./rooms/GameRoom.js";
 
 import {
+  Leaderboard,
+  MAX_TEAM,
+  getLeaderboard,
+  setLeaderboard
+} from "./leaderboard.js";
+
+import {
   findRoom,
   roomCount
 } from "./roomRegistry.js";
@@ -34,6 +41,10 @@ export interface AppOptions {
   // Value of Access-Control-Allow-Origin
   // for the room lookup endpoint.
   corsOrigin?: string;
+
+  // Where best times are kept. Default: in
+  // memory only (lost on restart).
+  leaderboard?: Leaderboard;
 
   // Print the Colyseus banner.
   greet?: boolean;
@@ -62,6 +73,10 @@ export interface App {
 
 const ROOM_CODE =
   /^[A-Za-z0-9]{6}$/;
+
+// How many levels the game has (the board of each
+// is listed).
+const LEADERBOARD_LEVELS = 3;
 
 function registerRoutes(
   app: express.Application,
@@ -200,6 +215,85 @@ function registerRoutes(
   );
 
   // ----------------------------------------
+  // LEADERBOARD: best level times
+  // ----------------------------------------
+  //
+  //   GET /leaderboard          all team sizes
+  //   GET /leaderboard?size=2   only two-player teams
+  //
+  // { boards: { "1": [...], "2": [...], "3": [...],
+  //             "0": [...] },   (0 = the whole game)
+  //   maxLevels, size }
+
+  app.use(
+    "/leaderboard",
+    (req, res, next) => {
+
+      res.setHeader(
+        "Access-Control-Allow-Origin",
+        options.corsOrigin ?? "*"
+      );
+
+      res.setHeader(
+        "Access-Control-Allow-Methods",
+        "GET, OPTIONS"
+      );
+
+      res.setHeader(
+        "Access-Control-Allow-Headers",
+        "Content-Type"
+      );
+
+      if (req.method === "OPTIONS") {
+
+        res.sendStatus(
+          204
+        );
+
+        return;
+      }
+
+      next();
+    }
+  );
+
+  app.get(
+    "/leaderboard",
+    (req, res) => {
+
+      const asked =
+        Number(req.query.size);
+
+      const size =
+        Number.isInteger(asked) &&
+        asked >= 1 &&
+        asked <= MAX_TEAM
+          ? asked
+          : 0;
+
+      // Times change with every game: never cache.
+      res.setHeader(
+        "Cache-Control",
+        "no-store"
+      );
+
+      res.json({
+
+        boards:
+          getLeaderboard().boards(
+            LEADERBOARD_LEVELS,
+            size
+          ),
+
+        maxLevels:
+          LEADERBOARD_LEVELS,
+
+        size
+      });
+    }
+  );
+
+  // ----------------------------------------
   // BUILT CLIENT
   // ----------------------------------------
 
@@ -259,6 +353,13 @@ export async function createApp(
 
   const startedAt =
     Date.now();
+
+  // Every app starts with its own board, so tests
+  // (and a restart in-process) do not share results.
+  setLeaderboard(
+    options.leaderboard ??
+      new Leaderboard()
+  );
 
   let servesClient =
     false;

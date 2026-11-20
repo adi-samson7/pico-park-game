@@ -51,7 +51,8 @@ FROM node:22-bookworm-slim
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=2567 \
-    CLIENT_DIST=/app/public
+    CLIENT_DIST=/app/public \
+    DATA_DIR=/app/data
 
 WORKDIR /app
 
@@ -59,6 +60,13 @@ COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=server-build /build/server/dist ./dist
 COPY --from=client-build /build/client/dist ./public
 COPY server/package.json ./
+
+# The leaderboard is kept in a file here. The server does not run as root, so the
+# folder must be writable by it. Mount a volume on it to keep the times across
+# redeploys (without one they start again with every new container).
+RUN mkdir -p /app/data && chown node:node /app/data
+
+VOLUME ["/app/data"]
 
 # Don't run as root.
 USER node

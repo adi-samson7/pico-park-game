@@ -8,6 +8,19 @@ import { NetworkManager } from "../network/NetworkManager";
 import { tabSession } from "../net/session";
 
 import {
+  loadProfile,
+  saveProfile
+} from "../profile";
+
+import {
+  NAME_MAX,
+  PALETTE,
+  sanitizeName
+} from "../shared/profile";
+
+import { OverlayInput } from "../ui/OverlayInput";
+
+import {
   addMuteButton,
   ensurePlayerTexture,
   juiceButton
@@ -33,6 +46,10 @@ export class MenuScene extends Phaser.Scene {
   // Why we are back at the menu (shown once).
   private notice = "";
 
+  // The text box for the player's name (a real <input> over
+  // the canvas).
+  private nameInput: OverlayInput | null = null;
+
   constructor() {
     super("MenuScene");
   }
@@ -45,6 +62,8 @@ export class MenuScene extends Phaser.Scene {
 
     this.notice =
       data?.notice ?? "";
+
+    this.nameInput = null;
   }
 
   create() {
@@ -285,6 +304,24 @@ export class MenuScene extends Phaser.Scene {
     );
 
     // ----------------------------------------
+    // LEADERBOARD, NAME AND COLOUR
+    // ----------------------------------------
+
+    this.createLeaderboardButton();
+
+    this.createProfileEditor();
+
+    this.events.once(
+      Phaser.Scenes.Events.SHUTDOWN,
+      () => {
+
+        this.nameInput?.destroy();
+
+        this.nameInput = null;
+      }
+    );
+
+    // ----------------------------------------
     // WHY WE ARE HERE / RESUME
     // ----------------------------------------
 
@@ -308,6 +345,190 @@ export class MenuScene extends Phaser.Scene {
   }
 
   // ========================================
+  // LEADERBOARD BUTTON
+  // ========================================
+
+  private createLeaderboardButton() {
+
+    const button =
+      this.add.text(
+        400,
+        448,
+        "LEADERBOARD",
+        {
+          fontSize: "18px",
+          color: "#ffffff",
+          backgroundColor: "#444444",
+          padding: {
+            left: 22,
+            right: 22,
+            top: 8,
+            bottom: 8
+          }
+        }
+      )
+        .setOrigin(0.5)
+        .setInteractive({
+          useHandCursor: true
+        });
+
+    juiceButton(
+      this,
+      button
+    );
+
+    button.on(
+      "pointerover",
+      () => button.setStyle({
+        backgroundColor: "#666666"
+      })
+    );
+
+    button.on(
+      "pointerout",
+      () => button.setStyle({
+        backgroundColor: "#444444"
+      })
+    );
+
+    button.on(
+      "pointerdown",
+      () => {
+
+        this.scene.start(
+          "LeaderboardScene"
+        );
+      }
+    );
+  }
+
+  // ========================================
+  // NAME AND COLOUR
+  // ========================================
+  //
+  // Remembered between visits and sent when creating or
+  // joining a room. Leaving the name empty gives "Player N",
+  // not choosing a colour gives the colour of your seat.
+
+  private createProfileEditor() {
+
+    const profile =
+      loadProfile();
+
+    this.add.text(
+      400,
+      490,
+      "YOUR NAME AND COLOUR",
+      {
+        fontSize: "12px",
+        color: "#888888"
+      }
+    ).setOrigin(0.5);
+
+    this.nameInput =
+      new OverlayInput(
+        this.game.canvas,
+        {
+          x: 400,
+          y: 516,
+          width: 230,
+          height: 32,
+          value: profile.name,
+          placeholder: "Your name",
+          maxLength: NAME_MAX,
+
+          onInput: (value) => {
+
+            profile.name =
+              sanitizeName(value);
+
+            saveProfile(profile);
+          },
+
+          // Show what will really be used.
+          onCommit: (value) => {
+
+            profile.name =
+              sanitizeName(value);
+
+            saveProfile(profile);
+
+            return profile.name;
+          }
+        }
+      );
+
+    // colour swatches
+
+    const swatches:
+      Phaser.GameObjects.Arc[] = [];
+
+    const refresh = () => {
+
+      swatches.forEach(
+        (swatch, i) => {
+
+          const chosen =
+            profile.color === PALETTE[i];
+
+          swatch.setStrokeStyle(
+            chosen ? 3 : 0,
+            0xffffff
+          );
+
+          swatch.setScale(
+            chosen ? 1.2 : 1
+          );
+        }
+      );
+    };
+
+    PALETTE.forEach(
+      (color, i) => {
+
+        const swatch =
+          this.add.circle(
+            400 + (i - 3.5) * 32,
+            556,
+            11,
+            color
+          )
+            .setInteractive({
+              useHandCursor: true
+            });
+
+        swatch.setData(
+          "color",
+          color
+        );
+
+        swatch.on(
+          "pointerdown",
+          () => {
+
+            // Clicking the chosen colour again lets the game
+            // choose (the colour of your seat).
+            profile.color =
+              profile.color === color
+                ? null
+                : color;
+
+            saveProfile(profile);
+
+            audio.sfx("click");
+
+            refresh();
+          }
+        );
+
+        swatches.push(swatch);
+      }
+    );
+
+    refresh();
+  }
+
+  // ========================================
   // NOTICE + RESUME
   // ========================================
 
@@ -319,7 +540,7 @@ export class MenuScene extends Phaser.Scene {
     const text =
       this.add.text(
         400,
-        480,
+        215,
         message,
         {
           fontSize: "20px",

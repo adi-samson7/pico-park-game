@@ -21,6 +21,17 @@ Built with **Phaser 3** (client), **Colyseus** + **Node.js** (server), **TypeScr
 
 In the lobby, **COPY** (or a click on the code itself) copies the room code to share with friends.
 
+**Name and colour.** Type a name (up to 12 characters) and pick one of eight colours on the menu; they are
+remembered in the browser. Everyone sees them in the lobby, as a tag above each player and in the leaderboard.
+The server has the last word: it strips anything but letters, digits and a few marks, adds a number if the name
+is taken (`Sam`, `Sam 2`) and gives another colour if yours is taken. In the lobby, click your own colour for the
+next free one or your own name to rename; during a game they are fixed. Left empty, you are "Player N".
+
+**Leaderboard.** The menu's **LEADERBOARD** shows the best times per level and for the whole game, filterable by
+team size (four players are not racing one). The server counts the time (from the end of the LEVEL screen to
+everyone being in the door), so it cannot be faked from a browser. Clearing a level tells you if it is a new
+record or how it ranks.
+
 After the last level the room turns back into a lobby: press **ENTER** on the win screen to return to it
 (same room, same code, same host), ready up again and start another round. Newcomers can join the room
 again between rounds.
@@ -67,12 +78,16 @@ npm run typecheck
 | `server/test/rooms.test.ts` | lobby rules, host migration, room locking, input validation, hazards, crystals → door → next level → win |
 | `server/test/reconnect.test.ts` | dropped connections: the seat is held, the player comes back with a full resync, host hand-over, the exit never waits for an absent player, input sequence numbers, latency reports |
 | `server/test/netcode.test.ts` | interpolation, prediction and reconciliation run against the real server physics over simulated latency and jitter (10 ms to 400 ms, 30 to 144 fps, stacking on a player's head), ping bands, session storage |
+| `server/test/profile.test.ts`, `profile-room.test.ts` | name cleaning (markup, emoji, control and zero-width characters, other scripts), unique names and colours, joining and changing them, refused during a game, flood protection |
+| `server/test/leaderboard.test.ts`, `leaderboard-room.test.ts` | ranking and team sizes, validation, saving and reading the file (corrupt files, full disks), real games recording results, the whole-game total, `GET /leaderboard`, a restart |
+| `server/test/client-profile.test.ts` | the remembered profile and the time / name formatting on screen |
 | `server/test/intermission.test.ts` | the LEVEL N / LEVEL CLEAR screens: nobody can move, nothing is collected, no timer runs, exact timing, the win after the last clear screen, leaving or reconnecting mid-screen |
 | `server/test/rematch.test.ts` | after the last level: the room is a lobby again (everyone unready, open to newcomers), a new game starts from there and plays like the first, leaving and joining between rounds, winning repeatedly |
 | `server/test/clipboard.test.ts` | copying the room code: clipboard API, fallback for plain http, failure |
 | `server/test/physics-sync.test.ts` | the client's copy of the physics is identical to the server's |
 | `server/test/e2e/game.e2e.ts` | the real UI in Chrome: clicking through menu → lobby → game, sounds, animations, effects |
 | `server/test/e2e/net.e2e.ts` | Chrome playing through a lag proxy: ping chip, prediction vs. a 300 ms round trip, smooth remote players, outages, reload-and-resume, giving up, stale sessions |
+| `server/test/e2e/profile.e2e.ts` | the name box (typing must not reach the game), colour swatches, persistence over a reload, name and colour in the lobby and over the players in the game, the record banner, the leaderboard screen |
 | `server/test/e2e/screens.e2e.ts` | the COPY button on a real clipboard (and its fallback), the LEVEL banners and held controls, reloading during a screen, win → ENTER → lobby → a new game in the same room |
 | `server/test/e2e/hosting.e2e.ts` | the client built for another origin (static host) talking to the game server: CORS, WebSocket, joining by code, resume |
 
@@ -91,6 +106,7 @@ Server environment variables:
 | `CLIENT_DIST` | `../../client/dist` | Directory of the built client to serve |
 | `CORS_ORIGIN` | `*` | `Access-Control-Allow-Origin` for the room lookup endpoint |
 | `LOG_LEVEL` | (info) | `silent` turns off the game log |
+| `DATA_DIR` | `./data` | Folder of `leaderboard.json` (the best times). In Docker: `/app/data`, mount a volume to keep it |
 | `LEVEL_CLEAR_SECONDS` | `3` | How long "LEVEL CLEAR" is shown |
 | `LEVEL_INTRO_SECONDS` | `3` | How long "LEVEL N" is shown before a level starts |
 | `RECONNECT_WINDOW_SECONDS` | `30` | How long a player whose connection dropped keeps their seat (see [Bad connections](#bad-connections)) |
@@ -156,7 +172,7 @@ Switches for comparing and testing (append to the URL):
 | `?interp=0` / `?interp=150` | draw other players at their latest position / 150 ms in the past |
 | `?retries=3` | give up on a lost connection after 3 attempts instead of 10 |
 
-If you change `server/src/physics.ts`, run `npm run sync:physics`: a test and `npm run typecheck` fail while the client's copy is out of date.
+If you change `server/src/physics.ts` or `server/src/profile.ts` (the client keeps copies of both), run `npm run sync:physics`: a test and `npm run typecheck` fail while a copy is out of date.
 
 ## Hosting the client on Vercel / Firebase Hosting / Netlify
 
@@ -181,6 +197,8 @@ client/            Phaser game (Vite + TypeScript)
 server/            Colyseus game server (Node + TypeScript)
   src/app.ts       HTTP + WebSocket server factory (lookup, /health, static client)
   src/physics.ts   platformer physics (pure functions; the client keeps a copy)
+  src/profile.ts   name cleaning and the colour palette (the client keeps a copy)
+  src/leaderboard.ts  best times: ranking, validation and the JSON file
   src/levels.ts    level data (platforms, crystals, exit, pits, spikes)
   src/rooms/       GameRoom: lobby, game loop, rules
   test/            unit, integration and browser tests

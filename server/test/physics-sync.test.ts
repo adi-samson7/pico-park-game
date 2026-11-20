@@ -3,34 +3,50 @@ import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 
-// The client predicts the local player with its own copy of the server's
-// physics. If the two ever differ, prediction disagrees with the server and
-// players get pulled back all the time. Edit server/src/physics.ts, then run
-// `npm run sync:physics` at the repository root.
+// The client keeps copies of two server files:
+//
+//   physics.ts  it predicts the local player with the server's physics; if the
+//               two differ, players get pulled back all the time
+//   profile.ts  how names are cleaned and which colours exist; if the two
+//               differ, the client accepts names the server then changes
+//
+// Edit the server's file, then run `npm run sync:physics` at the repository
+// root.
 
 const root = path.resolve(import.meta.dirname, "../..");
 
 const read = (file: string) =>
   fs.readFileSync(path.join(root, file), "utf8").replace(/\r\n/g, "\n");
 
-test("the client's copy of the physics is identical to the server's", () => {
+for (const name of ["physics.ts", "profile.ts"]) {
 
-  assert.equal(
-    read("client/src/shared/physics.ts"),
-    read("server/src/physics.ts"),
-    "client/src/shared/physics.ts is out of date: run `npm run sync:physics`"
-  );
-});
+  test(`the client's copy of ${name} is identical to the server's`, () => {
 
-test("the client's prediction imports the copy, not the server's file", () => {
+    assert.equal(
+      read(`client/src/shared/${name}`),
+      read(`server/src/${name}`),
+      `client/src/shared/${name} is out of date: run \`npm run sync:physics\``
+    );
+  });
+}
 
-  const prediction = read("client/src/net/prediction.ts");
+test("the client imports the copies, not the server's files", () => {
 
-  assert.match(prediction, /from "\.\.\/shared\/physics\.ts"/);
+  const files = [
+    "client/src/net/prediction.ts",
+    "client/src/profile.ts"
+  ];
 
-  assert.doesNotMatch(
-    prediction,
-    /from\s+"[^"]*server[^"]*"/,
-    "the client must build without the server's sources"
-  );
+  for (const file of files) {
+
+    const source = read(file);
+
+    assert.doesNotMatch(
+      source,
+      /from\s+"[^"]*server[^"]*"/,
+      `${file}: the client must build without the server's sources`
+    );
+  }
+
+  assert.match(read("client/src/net/prediction.ts"), /from "\.\.\/shared\/physics\.ts"/);
 });

@@ -2,6 +2,7 @@ import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 import { matchMaker } from "colyseus";
 
 import { createApp, type App } from "../src/app.js";
+import type { Leaderboard } from "../src/leaderboard.js";
 
 // Keep test output readable.
 process.env.LOG_LEVEL = "silent";
@@ -50,7 +51,7 @@ export async function waitFor<T>(
 
 /** Starts a quiet server on a free port. */
 export function startApp(
-  extra: { staticDir?: string } = {}
+  extra: { staticDir?: string; leaderboard?: Leaderboard } = {}
 ): Promise<App> {
 
   return createApp({
@@ -73,6 +74,8 @@ export interface PlayerState {
   velocityX: number;
   velocityY: number;
   playerIndex: number;
+  name?: string;
+  color?: number;
   alive: boolean;
   jumpCount: number;
   grounded: boolean;
@@ -119,6 +122,7 @@ const MESSAGES = [
   "playerJoined",
   "playerLeft",
   "playerReadyChanged",
+  "playerProfileChanged",
   "allPlayersReady",
   "hostChanged",
   "gameStarted",
@@ -277,18 +281,25 @@ export function clientFor(app: App) {
 }
 
 /** Creates a room and returns its bot. */
-export async function createRoom(app: App): Promise<Bot> {
+export async function createRoom(
+  app: App,
+  options: Record<string, unknown> = {}
+): Promise<Bot> {
 
-  const bot = new Bot(await clientFor(app).create("game"));
+  const bot = new Bot(await clientFor(app).create("game", options));
 
   await waitFor(() => bot.roomCode, "room code");
 
   return bot;
 }
 
-export async function joinRoom(app: App, host: Bot): Promise<Bot> {
+export async function joinRoom(
+  app: App,
+  host: Bot,
+  options: Record<string, unknown> = {}
+): Promise<Bot> {
 
-  const bot = new Bot(await clientFor(app).joinById(host.room.roomId));
+  const bot = new Bot(await clientFor(app).joinById(host.room.roomId, options));
 
   await waitFor(() => bot.hostId, "host info");
 

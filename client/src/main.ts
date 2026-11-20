@@ -5,6 +5,7 @@ import "./style.css";
 import { MenuScene } from "./scenes/MenuScene";
 import { LobbyScene } from "./scenes/LobbyScene";
 import { GameScene } from "./scenes/GameScene";
+import { LeaderboardScene } from "./scenes/LeaderboardScene";
 import { audio } from "./audio/AudioManager";
 
 const config:
@@ -36,7 +37,8 @@ const config:
   scene: [
     MenuScene,
     LobbyScene,
-    GameScene
+    GameScene,
+    LeaderboardScene
   ]
 };
 

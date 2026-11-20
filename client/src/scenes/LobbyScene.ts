@@ -6,6 +6,17 @@ import { ConnectionHud } from "../net/ConnectionHud";
 import { tabSession } from "../net/session";
 import { copyToClipboard } from "../net/clipboard";
 import { QUALITY_COLORS, qualityOf } from "../net/latency";
+import {
+  joinOptions,
+  loadProfile,
+  saveProfile
+} from "../profile";
+import {
+  NAME_MAX,
+  PALETTE,
+  defaultName,
+  sanitizeName
+} from "../shared/profile";
 
 // Roster table (game coordinates).
 const ROW_TOP = 275;
@@ -30,6 +41,10 @@ interface PlayerData {
   x: number;
   y: number;
   playerIndex: number;
+
+  // Chosen by the player; the server has cleaned it.
+  name?: string;
+
   color: number;
   ready: boolean;
 
@@ -232,6 +247,16 @@ export class LobbyScene extends Phaser.Scene {
         }
       ).setOrigin(0.5);
 
+    this.add.text(
+      400,
+      456,
+      "★ host   ·   click your colour or name to change them",
+      {
+        fontSize: "12px",
+        color: "#777777"
+      }
+    ).setOrigin(0.5);
+
     // ----------------------------------------
     // COPY ROOM CODE
     // ----------------------------------------
@@ -351,7 +376,11 @@ export class LobbyScene extends Phaser.Scene {
         );
 
         this.room =
-          await this.network.createRoom();
+          await this.network.createRoom(
+            joinOptions(
+              loadProfile()
+            )
+          );
 
         this.statusText.setText(
           "Room created!"
@@ -385,7 +414,10 @@ export class LobbyScene extends Phaser.Scene {
 
         this.room =
           await this.network.joinRoomByCode(
-            code.trim().toUpperCase()
+            code.trim().toUpperCase(),
+            joinOptions(
+              loadProfile()
+            )
           );
 
         this.statusText.setText(
@@ -775,12 +807,179 @@ export class LobbyScene extends Phaser.Scene {
     );
 
     this.listen(
+      "playerProfileChanged",
+      (data: {
+        id: string;
+        name: string;
+        color: number;
+      }) => {
+
+        const player =
+          this.players.get(
+            data.id
+          );
+
+        if (!player) {
+          return;
+        }
+
+        player.name =
+          data.name;
+
+        player.color =
+          data.color;
+
+        // Remember my own colour for next time (the name is
+        // remembered as typed, not as the server numbered it).
+
+        if (
+          data.id ===
+          this.room.sessionId
+        ) {
+
+          const profile =
+            loadProfile();
+
+          profile.color =
+            data.color;
+
+          saveProfile(
+            profile
+          );
+        }
+
+        this.updatePlayerList();
+      }
+    );
+
+    this.listen(
       "resync",
       (data: ResyncData) => {
 
         this.applyResync(
           data
         );
+      }
+    );
+  }
+
+  // ==========================================
+  // CHANGING NAME AND COLOUR
+  // ==========================================
+
+  // The next palette colour nobody else has.
+
+  private nextColor() {
+
+    const mine =
+      this.players.get(
+        this.room?.sessionId
+      );
+
+    if (!mine) {
+      return;
+    }
+
+    const taken =
+      new Set(
+        Array.from(
+          this.players.values()
+        )
+          .filter(
+            player =>
+              player.id !== mine.id
+          )
+          .map(
+            player =>
+              player.color
+          )
+      );
+
+    const start =
+      Math.max(
+        0,
+        (PALETTE as readonly number[])
+          .indexOf(
+            mine.color
+          )
+      );
+
+    for (
+      let step = 1;
+      step <= PALETTE.length;
+      step++
+    ) {
+
+      const candidate =
+        PALETTE[
+          (start + step) %
+            PALETTE.length
+        ];
+
+      if (!taken.has(candidate)) {
+
+        audio.sfx("click");
+
+        this.room.send(
+          "setProfile",
+          {
+            color:
+              candidate
+          }
+        );
+
+        return;
+      }
+    }
+  }
+
+  private askForName() {
+
+    const mine =
+      this.players.get(
+        this.room?.sessionId
+      );
+
+    if (!mine) {
+      return;
+    }
+
+    const typed =
+      window.prompt(
+        `Your name (up to ${NAME_MAX} characters):`,
+        mine.name ?? ""
+      );
+
+    if (typed === null) {
+      return;
+    }
+
+    const name =
+      sanitizeName(typed);
+
+    if (
+      !name ||
+      name === mine.name
+    ) {
+      return;
+    }
+
+    // Remembered as typed, for next time.
+
+    const profile =
+      loadProfile();
+
+    profile.name =
+      name;
+
+    saveProfile(
+      profile
+    );
+
+    this.room.send(
+      "setProfile",
+      {
+        name
       }
     );
   }
@@ -1198,18 +1397,19 @@ export class LobbyScene extends Phaser.Scene {
         this.room?.sessionId;
 
       let playerName =
-        `Player ${
-          player.playerIndex + 1
-        }`;
+        player.name ||
+        defaultName(
+          player.playerIndex
+        );
 
       if (isHost) {
         playerName +=
-          " [HOST]";
+          " ★";
       }
 
       if (isMe) {
         playerName +=
-          " (YOU)";
+          " (you)";
       }
 
       // row background (yours is outlined)
@@ -1236,14 +1436,29 @@ export class LobbyScene extends Phaser.Scene {
 
       // colour dot, centred on the row
 
-      extras.push(
+      const dot =
         this.add.circle(
           COL_DOT,
           y,
           9,
           player.color
-        )
-      );
+        );
+
+      extras.push(dot);
+
+      // Your own colour: click for the next free one.
+
+      if (isMe) {
+
+        dot.setInteractive({
+          useHandCursor: true
+        });
+
+        dot.on(
+          "pointerdown",
+          () => this.nextColor()
+        );
+      }
 
       // name
 
@@ -1264,6 +1479,20 @@ export class LobbyScene extends Phaser.Scene {
                 : "normal"
           }
         ).setOrigin(0, 0.5);
+
+      // Your own name: click to change it.
+
+      if (isMe) {
+
+        text.setInteractive({
+          useHandCursor: true
+        });
+
+        text.on(
+          "pointerdown",
+          () => this.askForName()
+        );
+      }
 
       // status, in its own column
 

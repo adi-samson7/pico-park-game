@@ -1,6 +1,12 @@
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createApp } from "./app.js";
+
+import {
+  Leaderboard,
+  fileStore
+} from "./leaderboard.js";
 
 // ==========================================
 // CONFIGURATION (environment variables)
@@ -11,6 +17,9 @@ import { createApp } from "./app.js";
 //   CLIENT_DIST   built client directory   (../../client/dist)
 //   CORS_ORIGIN   allowed origin for the
 //                 room lookup endpoint     (*)
+//   DATA_DIR      where the leaderboard is
+//                 kept            (./data in the
+//                 working directory)
 
 const port =
   Number(
@@ -47,13 +56,31 @@ if (
 // START
 // ==========================================
 
+const dataDir =
+  path.resolve(
+    process.env.DATA_DIR ??
+      "data"
+  );
+
+const leaderboardFile =
+  path.join(
+    dataDir,
+    "leaderboard.json"
+  );
+
 const app =
   await createApp({
     port,
     host,
     staticDir,
     corsOrigin:
-      process.env.CORS_ORIGIN
+      process.env.CORS_ORIGIN,
+    leaderboard:
+      new Leaderboard(
+        fileStore(
+          leaderboardFile
+        )
+      )
   });
 
 console.log(
@@ -66,6 +93,10 @@ console.log(
 
 console.log(
   `Game + lookup: http://${host}:${app.port}`
+);
+
+console.log(
+  `Leaderboard file: ${leaderboardFile}`
 );
 
 console.log(

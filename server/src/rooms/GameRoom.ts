@@ -3,6 +3,18 @@ import { Room, Client } from "colyseus";
 import { log } from "../log.js";
 
 import {
+  FULL_RUN,
+  getLeaderboard
+} from "../leaderboard.js";
+
+import {
+  defaultName,
+  pickColor,
+  sanitizeName,
+  uniqueName
+} from "../profile.js";
+
+import {
   registerRoom,
   findRoom,
   removeRoom,
@@ -28,6 +40,12 @@ import {
   type Spikes
 } from "../physics.js";
 
+// How often a player may change their name or colour:
+// a burst of this many, then one per PROFILE_REFILL_MS.
+const PROFILE_BURST = 5;
+
+const PROFILE_REFILL_MS = 200;
+
 // ==========================================
 // TYPES
 // ==========================================
@@ -43,6 +61,10 @@ interface Player {
   velocityY: number;
 
   playerIndex: number;
+
+  // Chosen by the player (sanitised, unique in
+  // the room): see profile.ts.
+  name: string;
 
   color: number;
 
@@ -75,6 +97,13 @@ interface Player {
   // server applied. Echoed in every state
   // so the client can reconcile prediction.
   lastSeq: number;
+
+  // Name / colour changes allowed right now. A
+  // short burst is fine (a colour, then a name);
+  // a flood of requests is not: see setProfile.
+  profileTokens: number;
+
+  profileTokensAt: number;
 }
 
 interface PlayerInput {
@@ -158,6 +187,10 @@ export class GameRoom extends Room {
   // left over from an earlier phase can never
   // act.
   private phaseToken = 0;
+
+  // How long each level of the running game was
+  // played (ms), for the whole-game time.
+  private runLevelMs: number[] = [];
 
   // When the current level started being
   // PLAYED (after its intro); 0 otherwise.
@@ -379,21 +412,6 @@ export class GameRoom extends Room {
 
   private spawnPositions =
     SPAWN_POSITIONS;
-
-  // ========================================
-  // COLORS
-  // ========================================
-
-  private playerColors = [
-
-    0xff4444,
-
-    0x4488ff,
-
-    0x44cc66,
-
-    0xffcc33
-  ];
 
   // ========================================
   // LEVELS
@@ -693,6 +711,132 @@ export class GameRoom extends Room {
     );
 
     // ========================================
+    // NAME AND COLOUR
+    // ========================================
+    //
+    // Changed in the lobby only (during a game
+    // everyone is who they were when it began).
+    // The same rules as when joining apply, and
+    // the answer to everybody is the result, not
+    // the request.
+
+    this.onMessage(
+      "setProfile",
+      (
+        client,
+        message
+      ) => {
+
+        const player =
+          this.players.get(
+            client.sessionId
+          );
+
+        if (
+          !player ||
+          !player.connected ||
+          this.gameStarted ||
+          !message ||
+          typeof message !== "object"
+        ) {
+          return;
+        }
+
+        // Up to PROFILE_BURST changes at once, then
+        // one every PROFILE_REFILL_MS.
+
+        const now =
+          Date.now();
+
+        player.profileTokens =
+          Math.min(
+            PROFILE_BURST,
+            player.profileTokens +
+              (now - player.profileTokensAt) /
+                PROFILE_REFILL_MS
+          );
+
+        player.profileTokensAt =
+          now;
+
+        if (player.profileTokens < 1) {
+          return;
+        }
+
+        player.profileTokens -= 1;
+
+        const others =
+          Array.from(
+            this.players.values()
+          ).filter(
+            other =>
+              other.id !== player.id
+          );
+
+        const requestedName =
+          sanitizeName(
+            (message as any).name
+          );
+
+        if (requestedName) {
+
+          player.name =
+            uniqueName(
+              requestedName,
+              others.map(
+                other =>
+                  other.name
+              )
+            );
+        }
+
+        const requestedColor =
+          (message as any).color;
+
+        if (requestedColor !== undefined) {
+
+          const taken =
+            others.map(
+              other =>
+                other.color
+            );
+
+          // A colour somebody has is refused:
+          // the player keeps theirs.
+
+          const chosen =
+            pickColor(
+              requestedColor,
+              taken,
+              player.playerIndex
+            );
+
+          if (
+            chosen === requestedColor
+          ) {
+
+            player.color =
+              chosen;
+          }
+        }
+
+        this.broadcast(
+          "playerProfileChanged",
+          {
+            id:
+              player.id,
+
+            name:
+              player.name,
+
+            color:
+              player.color
+          }
+        );
+      }
+    );
+
+    // ========================================
     // RESYNC
     // ========================================
     //
@@ -798,7 +942,11 @@ export class GameRoom extends Room {
   // ==========================================
 
   onJoin(
-    client: Client
+    client: Client,
+    options?: {
+      name?: unknown;
+      color?: unknown;
+    }
   ) {
 
     log(
@@ -832,6 +980,35 @@ export class GameRoom extends Room {
         playerIndex
       ];
 
+    // The player's own choice of name and
+    // colour, checked here: the client is not
+    // trusted. Both are unique in the room.
+
+    const others =
+      Array.from(
+        this.players.values()
+      );
+
+    const name =
+      uniqueName(
+        sanitizeName(options?.name) ||
+          defaultName(playerIndex),
+        others.map(
+          other =>
+            other.name
+        )
+      );
+
+    const color =
+      pickColor(
+        options?.color,
+        others.map(
+          other =>
+            other.color
+        ),
+        playerIndex
+      );
+
     const player: Player = {
 
       id:
@@ -851,10 +1028,9 @@ export class GameRoom extends Room {
 
       playerIndex,
 
-      color:
-        this.playerColors[
-          playerIndex
-        ],
+      name,
+
+      color,
 
       ready:
         false,
@@ -878,7 +1054,13 @@ export class GameRoom extends Room {
         true,
 
       lastSeq:
-        0
+        0,
+
+      profileTokens:
+        PROFILE_BURST,
+
+      profileTokensAt:
+        Date.now()
     };
 
     this.players.set(
@@ -1285,6 +1467,9 @@ export class GameRoom extends Room {
 
             playerIndex:
               player.playerIndex,
+
+            name:
+              player.name,
 
             color:
               player.color,
@@ -1712,6 +1897,39 @@ export class GameRoom extends Room {
     const elapsedMs =
       this.levelElapsedMs();
 
+    // The time goes on the leaderboard, with the
+    // names of the players who are here.
+
+    const team =
+      this.connectedPlayers();
+
+    const placement =
+      team.length > 0 && elapsedMs > 0
+        ? getLeaderboard().record({
+            level:
+              completedLevel,
+
+            ms:
+              elapsedMs,
+
+            names:
+              team.map(
+                player =>
+                  player.name
+              ),
+
+            size:
+              team.length,
+
+            at:
+              Date.now()
+          })
+        : null;
+
+    this.runLevelMs.push(
+      elapsedMs
+    );
+
     const token =
       ++this.phaseToken;
 
@@ -1751,7 +1969,21 @@ export class GameRoom extends Room {
           ms,
 
         // How long the level took to play.
-        elapsedMs
+        elapsedMs,
+
+        // Where that puts the team among teams of
+        // the same size (null: not on the board).
+        rank:
+          placement?.rank ?? null,
+
+        record:
+          placement?.record ?? false,
+
+        previousBest:
+          placement?.previousBest ?? null,
+
+        teamSize:
+          team.length
       }
     );
 
@@ -1831,11 +2063,69 @@ export class GameRoom extends Room {
       "GAME FINISHED - PLAYERS WIN"
     );
 
+    // The whole game: every level, added up.
+
+    let totalMs: number | null = null;
+
+    let placement = null;
+
+    const team =
+      this.connectedPlayers();
+
+    if (
+      this.runLevelMs.length >=
+        this.MAX_LEVELS &&
+      team.length > 0
+    ) {
+
+      totalMs =
+        this.runLevelMs.reduce(
+          (sum, ms) =>
+            sum + ms,
+          0
+        );
+
+      placement =
+        getLeaderboard().record({
+          level:
+            FULL_RUN,
+
+          ms:
+            totalMs,
+
+          names:
+            team.map(
+              player =>
+                player.name
+            ),
+
+          size:
+            team.length,
+
+          at:
+            Date.now()
+        });
+    }
+
     this.broadcast(
       "gameFinished",
       {
         result:
-          "win"
+          "win",
+
+        totalMs,
+
+        rank:
+          placement?.rank ?? null,
+
+        record:
+          placement?.record ?? false,
+
+        previousBest:
+          placement?.previousBest ?? null,
+
+        teamSize:
+          team.length
       }
     );
 
@@ -1870,6 +2160,9 @@ export class GameRoom extends Room {
 
     this.score =
       0;
+
+    this.runLevelMs =
+      [];
 
     this.loadLevel(1);
 
@@ -1936,6 +2229,9 @@ export class GameRoom extends Room {
 
     this.score =
       0;
+
+    this.runLevelMs =
+      [];
 
     this.loadLevel(1);
 
@@ -2131,6 +2427,9 @@ export class GameRoom extends Room {
 
           playerIndex:
             player.playerIndex,
+
+          name:
+            player.name,
 
           color:
             player.color,

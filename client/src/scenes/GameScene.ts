@@ -19,6 +19,11 @@ import { SnapshotBuffer } from "../net/snapshots";
 import { tabSession } from "../net/session";
 
 import {
+  formatTime,
+  ordinal
+} from "../format";
+
+import {
   addMuteButton,
   burst,
   confettiBurst,
@@ -40,6 +45,9 @@ interface PlayerData {
   y: number;
 
   playerIndex: number;
+
+  // Chosen by the player (cleaned by the server).
+  name?: string;
 
   color: number;
 
@@ -245,6 +253,11 @@ export class GameScene extends Phaser.Scene {
     Phaser.GameObjects.Text | null =
     null;
 
+  // Under the time: "NEW RECORD!" or the rank.
+  private bannerNote:
+    Phaser.GameObjects.Text | null =
+    null;
+
   private bannerVisible = false;
 
   // Runs the shared physics on the local
@@ -257,6 +270,14 @@ export class GameScene extends Phaser.Scene {
   // jitter does not show (net/snapshots.ts).
   private snapshots:
     Map<string, SnapshotBuffer> =
+    new Map();
+
+  // The player's name, floating above them.
+  private nameLabels:
+    Map<
+      string,
+      Phaser.GameObjects.Text
+    > =
     new Map();
 
   // "connection lost" tag above an absent
@@ -463,10 +484,12 @@ export class GameScene extends Phaser.Scene {
     this.bannerVeil = null;
     this.bannerTitle = null;
     this.bannerSub = null;
+    this.bannerNote = null;
     this.bannerVisible = false;
     this.predictor = null;
     this.snapshots = new Map();
     this.ghostLabels = new Map();
+    this.nameLabels = new Map();
     this.latencyLabels = [];
 
     if (
@@ -1528,9 +1551,14 @@ export class GameScene extends Phaser.Scene {
 
         ghost.setPosition(
           sprite.x,
-          sprite.y - 76
+          sprite.y - 98
         );
       }
+
+      this.updateNameLabel(
+        id,
+        sprite
+      );
 
       // ---- position ----
 
@@ -1775,6 +1803,10 @@ export class GameScene extends Phaser.Scene {
           final?: boolean;
           clearMs?: number;
           elapsedMs?: number;
+          rank?: number | null;
+          record?: boolean;
+          previousBest?: number | null;
+          teamSize?: number;
         }
       ) => {
 
@@ -1805,7 +1837,19 @@ export class GameScene extends Phaser.Scene {
               data.completedLevel,
 
             elapsedMs:
-              data.elapsedMs
+              data.elapsedMs,
+
+            rank:
+              data.rank,
+
+            record:
+              data.record,
+
+            previousBest:
+              data.previousBest,
+
+            teamSize:
+              data.teamSize
           }
         );
       }
@@ -1879,7 +1923,15 @@ export class GameScene extends Phaser.Scene {
 
     this.room.onMessage(
       "gameFinished",
-      () => {
+      (
+        data: {
+          totalMs?: number | null;
+          rank?: number | null;
+          record?: boolean;
+          previousBest?: number | null;
+          teamSize?: number;
+        }
+      ) => {
 
         this.gameFinished =
           true;
@@ -1899,8 +1951,21 @@ export class GameScene extends Phaser.Scene {
           7000
         );
 
+        // The whole game's time, and where it ranks.
+
+        const total =
+          data?.totalMs
+            ? `Total time ${formatTime(
+                data.totalMs
+              )}\n${this.rankNote(
+                data
+              )}\n\n`
+            : "\n";
+
         this.showPersistentMessage(
-          "YOU WIN!\n\nALL LEVELS COMPLETE\n\nPress ENTER to go back to the lobby"
+          "YOU WIN!\n\nALL LEVELS COMPLETE\n\n" +
+          total +
+          "Press ENTER to go back to the lobby"
         );
 
         this.statusText.setText(
@@ -1987,6 +2052,14 @@ export class GameScene extends Phaser.Scene {
         }
 
         this.playerFx.delete(
+          data.id
+        );
+
+        this.nameLabels.get(
+          data.id
+        )?.destroy();
+
+        this.nameLabels.delete(
           data.id
         );
 
@@ -2155,12 +2228,31 @@ export class GameScene extends Phaser.Scene {
         .setOrigin(0.5)
         .setDepth(501)
         .setVisible(false);
+
+    this.bannerNote =
+      this.add.text(
+        400,
+        392,
+        "",
+        {
+          fontSize: "30px",
+          color: "#ffdd44",
+          fontStyle: "bold",
+          stroke: "#000000",
+          strokeThickness: 5
+        }
+      )
+        .setOrigin(0.5)
+        .setDepth(501)
+        .setVisible(false);
   }
 
   private showBanner(
     title: string,
     sub: string,
-    color: string
+    color: string,
+    note = "",
+    noteColor = "#ffdd44"
   ) {
 
     if (
@@ -2177,6 +2269,10 @@ export class GameScene extends Phaser.Scene {
 
     this.bannerSub.setText(sub);
 
+    this.bannerNote?.setText(note);
+
+    this.bannerNote?.setColor(noteColor);
+
     // Only pop in when it appears; a text
     // update while it is up changes nothing
     // else.
@@ -2192,9 +2288,14 @@ export class GameScene extends Phaser.Scene {
       of [
         this.bannerVeil,
         this.bannerTitle,
-        this.bannerSub
+        this.bannerSub,
+        this.bannerNote
       ]
     ) {
+
+      if (!item) {
+        continue;
+      }
 
       this.tweens.killTweensOf(item);
 
@@ -2213,9 +2314,14 @@ export class GameScene extends Phaser.Scene {
       const item
       of [
         this.bannerTitle,
-        this.bannerSub
+        this.bannerSub,
+        this.bannerNote
       ]
     ) {
+
+      if (!item) {
+        continue;
+      }
 
       item.setAlpha(1);
 
@@ -2242,7 +2348,8 @@ export class GameScene extends Phaser.Scene {
     const items = [
       this.bannerVeil,
       this.bannerTitle,
-      this.bannerSub
+      this.bannerSub,
+      this.bannerNote
     ];
 
     for (const item of items) {
@@ -2268,6 +2375,43 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  // "NEW RECORD!" (and what it beat), or "2nd best for
+  // 2 players". Nothing when the time did not make
+  // the board.
+
+  private rankNote(
+    info: {
+      rank?: number | null;
+      record?: boolean;
+      previousBest?: number | null;
+      teamSize?: number;
+    }
+  ): string {
+
+    if (info.record) {
+
+      return info.previousBest
+        ? `★ NEW RECORD! ★\n(was ${formatTime(
+            info.previousBest
+          )})`
+        : "★ FIRST RECORD! ★";
+    }
+
+    if (info.rank) {
+
+      const n =
+        info.teamSize ?? 1;
+
+      return `${ordinal(
+        info.rank
+      )} best for ${n} player${
+        n === 1 ? "" : "s"
+      }`;
+    }
+
+    return "";
+  }
+
   // Follows the server: while "intro" or
   // "clear" is on, the banner is up and the
   // players cannot move.
@@ -2277,6 +2421,10 @@ export class GameScene extends Phaser.Scene {
     info: {
       level?: number;
       elapsedMs?: number;
+      rank?: number | null;
+      record?: boolean;
+      previousBest?: number | null;
+      teamSize?: number;
     } = {}
   ) {
 
@@ -2284,6 +2432,21 @@ export class GameScene extends Phaser.Scene {
       phase !== this.phase;
 
     this.phase = phase;
+
+    // A message that was still on screen ("EXIT
+    // OPEN!"...) would show through the banner.
+
+    if (
+      changed &&
+      phase !== "playing"
+    ) {
+
+      this.tweens.killTweensOf(
+        this.messageText
+      );
+
+      this.messageText.setText("");
+    }
 
     if (phase === "playing") {
 
@@ -2323,18 +2486,35 @@ export class GameScene extends Phaser.Scene {
     const sub =
       phase === "clear"
         ? info.elapsedMs
-          ? `Time ${(
-              info.elapsedMs / 1000
-            ).toFixed(1)} s`
+          ? `Time ${formatTime(
+              info.elapsedMs
+            )}`
           : ""
         : "Get ready!";
+
+    // Where the time ranks among teams of the same size.
+
+    let note = "";
+
+    if (
+      phase === "clear" &&
+      info.elapsedMs
+    ) {
+
+      note =
+        this.rankNote(info);
+    }
 
     this.showBanner(
       title,
       sub,
       phase === "clear"
         ? "#66ff88"
-        : "#ffffff"
+        : "#ffffff",
+      note,
+      info.record
+        ? "#ffdd44"
+        : "#aaccff"
     );
   }
 
@@ -2412,6 +2592,12 @@ export class GameScene extends Phaser.Scene {
           ?.destroy();
 
         this.ghostLabels.delete(id);
+
+        this.nameLabels
+          .get(id)
+          ?.destroy();
+
+        this.nameLabels.delete(id);
       }
     }
 
@@ -2463,6 +2649,74 @@ export class GameScene extends Phaser.Scene {
         data.level
       );
     }
+  }
+
+  // The player's chosen name, floating over them.
+  // Yours sits above the "YOU" marker.
+
+  private updateNameLabel(
+    id: string,
+    sprite:
+      Phaser.Physics.Arcade.Sprite
+  ) {
+
+    const name =
+      this.playerData.get(id)?.name;
+
+    if (!name) {
+      return;
+    }
+
+    const isLocal =
+      id === this.room.sessionId;
+
+    let label =
+      this.nameLabels.get(id);
+
+    if (!label) {
+
+      label =
+        this.add.text(
+          0,
+          0,
+          name,
+          {
+            fontSize: "13px",
+            color: "#ffffff",
+            fontStyle:
+              isLocal
+                ? "bold"
+                : "normal",
+            stroke: "#000000",
+            strokeThickness: 3
+          }
+        )
+          .setOrigin(0.5, 1)
+          .setDepth(21);
+
+      this.nameLabels.set(
+        id,
+        label
+      );
+
+    } else if (label.text !== name) {
+
+      label.setText(name);
+    }
+
+    label.setPosition(
+      sprite.x,
+      sprite.y - (isLocal ? 88 : 68)
+    );
+
+    label.setVisible(
+      sprite.visible
+    );
+
+    // Greyed out together with an absent player.
+    label.setAlpha(
+      sprite.alpha
+    );
   }
 
   // Puts a player's sprite at a position
@@ -2554,7 +2808,7 @@ export class GameScene extends Phaser.Scene {
       id,
       this.add.text(
         sprite.x,
-        sprite.y - 76,
+        sprite.y - 98,
         "CONNECTION LOST",
         {
           fontSize: "11px",
@@ -4025,7 +4279,8 @@ export class GameScene extends Phaser.Scene {
       of [
         this.bannerVeil,
         this.bannerTitle,
-        this.bannerSub
+        this.bannerSub,
+        this.bannerNote
       ]
     ) {
 
@@ -4035,6 +4290,7 @@ export class GameScene extends Phaser.Scene {
     this.bannerVeil = null;
     this.bannerTitle = null;
     this.bannerSub = null;
+    this.bannerNote = null;
     this.bannerVisible = false;
 
     this.predictor = null;
@@ -4045,6 +4301,7 @@ export class GameScene extends Phaser.Scene {
       const label
       of [
         ...this.ghostLabels.values(),
+        ...this.nameLabels.values(),
         ...this.latencyLabels
       ]
     ) {
@@ -4053,6 +4310,8 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.ghostLabels.clear();
+
+    this.nameLabels.clear();
 
     this.latencyLabels = [];
 
