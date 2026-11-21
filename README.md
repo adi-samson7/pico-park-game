@@ -1,6 +1,5 @@
 # Pico Co-op
 
-[![CI](https://github.com/adi-samson7/pico-park-game/actions/workflows/ci.yml/badge.svg)](https://github.com/adi-samson7/pico-park-game/actions/workflows/ci.yml)
 ![Node](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![Phaser](https://img.shields.io/badge/Phaser-3.90-8c52ff)
