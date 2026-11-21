@@ -85,7 +85,45 @@ const TRACKS: Record<
   }
 };
 
-const MUTE_KEY = "pico.muted";
+// Sound is ON unless the player has turned it off with M or
+// the speaker. The choice is remembered in the browser.
+//
+// The key carries a version: an earlier release saved the
+// choice under "pico.muted", and a browser where it was ever
+// switched off would stay silent forever. Reading a new key
+// starts everybody with sound on once; from then on their own
+// choice is kept.
+const MUTE_KEY = "pico.muted.v2";
+
+const OLD_MUTE_KEY = "pico.muted";
+
+// How loud music and effects are (each 0 to 1, in the
+// settings menu), remembered like the mute choice.
+const VOLUME_KEY = "pico.volume.v1";
+
+// What "full volume" means for each bus.
+const BASE_SFX = 0.8;
+
+const BASE_MUSIC = 0.16;
+
+// A number from 0 to 1 (anything else: `fallback`).
+function clampLevel(
+  value: unknown,
+  fallback = 1
+): number {
+
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value)
+  ) {
+    return fallback;
+  }
+
+  return Math.max(
+    0,
+    Math.min(1, value)
+  );
+}
 
 // ==========================================
 // AUDIO MANAGER
@@ -115,6 +153,11 @@ class AudioManager {
 
   private muted = false;
 
+  // 0..1: the settings sliders.
+  private musicLevelValue = 1;
+
+  private sfxLevelValue = 1;
+
   // Track the game wants playing (it
   // starts once audio is unlocked).
   private wantedMusic:
@@ -142,6 +185,8 @@ class AudioManager {
 
     this.muted =
       this.loadMuted();
+
+    this.loadVolumes();
 
     if (
       typeof window !==
@@ -213,13 +258,13 @@ class AudioManager {
         this.ctx.createGain();
 
       this.sfxBus.gain.value =
-        0.8;
+        BASE_SFX * this.sfxLevelValue;
 
       this.musicBus =
         this.ctx.createGain();
 
       this.musicBus.gain.value =
-        0.16;
+        BASE_MUSIC * this.musicLevelValue;
 
       this.sfxBus.connect(
         this.master
@@ -575,6 +620,88 @@ class AudioManager {
     };
   }
 
+  // ========================================
+  // VOLUME (music and effects)
+  // ========================================
+
+  get musicLevel(): number {
+    return this.musicLevelValue;
+  }
+
+  get sfxLevel(): number {
+    return this.sfxLevelValue;
+  }
+
+  setMusicLevel(level: number) {
+
+    this.musicLevelValue =
+      clampLevel(level);
+
+    if (this.musicBus) {
+
+      this.musicBus.gain.value =
+        BASE_MUSIC * this.musicLevelValue;
+    }
+
+    this.saveVolumes();
+  }
+
+  setSfxLevel(level: number) {
+
+    this.sfxLevelValue =
+      clampLevel(level);
+
+    if (this.sfxBus) {
+
+      this.sfxBus.gain.value =
+        BASE_SFX * this.sfxLevelValue;
+    }
+
+    this.saveVolumes();
+  }
+
+  private loadVolumes() {
+
+    try {
+
+      const saved =
+        JSON.parse(
+          window.localStorage.getItem(
+            VOLUME_KEY
+          ) ?? "null"
+        );
+
+      if (saved && typeof saved === "object") {
+
+        this.musicLevelValue =
+          clampLevel(saved.music, 1);
+
+        this.sfxLevelValue =
+          clampLevel(saved.sfx, 1);
+      }
+
+    } catch {
+      // storage blocked or damaged: full volume
+    }
+  }
+
+  private saveVolumes() {
+
+    try {
+
+      window.localStorage.setItem(
+        VOLUME_KEY,
+        JSON.stringify({
+          music: this.musicLevelValue,
+          sfx: this.sfxLevelValue
+        })
+      );
+
+    } catch {
+      // ignore
+    }
+  }
+
   // localStorage can throw (private mode,
   // blocked storage): never let it break
   // the game.
@@ -582,6 +709,11 @@ class AudioManager {
   private loadMuted(): boolean {
 
     try {
+
+      // the old choice is not used any more
+      window.localStorage.removeItem(
+        OLD_MUTE_KEY
+      );
 
       return (
         window.localStorage.getItem(

@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 
 import { audio } from "./audio/AudioManager";
+import { controls } from "./input/Controls";
 import { drawIcon } from "./ui/icons";
 
 // ==========================================
@@ -348,10 +349,14 @@ export function addMuteButton(
   y: number
 ): Phaser.GameObjects.Text {
 
+  // Browsers play no sound until the first click or key press:
+  // until then "ON" would be a lie, so say what is needed.
   const label = () =>
     audio.isMuted
       ? "SOUND: OFF [M]"
-      : "SOUND: ON [M]";
+      : audio.running
+        ? "SOUND: ON [M]"
+        : "SOUND: ON - CLICK ANYWHERE TO START";
 
   // The speaker icon sits in front of the words.
 
@@ -408,6 +413,14 @@ export function addMuteButton(
 
   refresh();
 
+  // The first click unlocks the sound: update the words then.
+  const watch =
+    scene.time.addEvent({
+      delay: 200,
+      loop: true,
+      callback: refresh
+    });
+
   text.on(
     "pointerdown",
     () => {
@@ -434,10 +447,13 @@ export function addMuteButton(
     );
   };
 
-  scene.input.keyboard?.on(
-    "keydown-M",
-    onKey
-  );
+  // (from `controls`: Phaser's "keydown-M" goes by keyCode, which
+  // is wrong while an input method is on)
+  const stopKey =
+    controls.onPress(
+      "KeyM",
+      onKey
+    );
 
   scene.events.once(
     Phaser.Scenes.Events.SHUTDOWN,
@@ -445,10 +461,9 @@ export function addMuteButton(
 
       unsubscribe();
 
-      scene.input.keyboard?.off(
-        "keydown-M",
-        onKey
-      );
+      watch.remove(false);
+
+      stopKey();
     }
   );
 

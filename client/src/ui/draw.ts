@@ -113,6 +113,74 @@ export function addBackground(
 }
 
 /**
+ * Translucent squares in the four player colours that drift
+ * upwards while turning, behind everything else.
+ */
+export function addDriftingBlocks(
+  scene: Phaser.Scene,
+  count = 16
+) {
+
+  const colors = [
+    0xff4444,
+    0x4488ff,
+    0x44cc66,
+    0xffcc33
+  ];
+
+  for (let i = 0; i < count; i++) {
+
+    const size =
+      10 + Math.random() * 18;
+
+    const block =
+      scene.add.rectangle(
+        Math.random() * 800,
+        Math.random() * 640,
+        size,
+        size,
+        colors[i % 4],
+        0.16
+      );
+
+    // above the backdrop, below the floor and the panels
+    block.setDepth(-60);
+
+    scene.tweens.add({
+
+      targets: block,
+
+      y: -40,
+
+      duration:
+        9000 + Math.random() * 9000,
+
+      repeat: -1,
+
+      onRepeat: () => {
+
+        block.x =
+          Math.random() * 800;
+
+        block.y = 640;
+      }
+    });
+
+    scene.tweens.add({
+
+      targets: block,
+
+      angle: 360,
+
+      duration:
+        6000 + Math.random() * 6000,
+
+      repeat: -1
+    });
+  }
+}
+
+/**
  * A rounded rectangle with an optional soft glow around
  * it. (x, y) is its CENTRE.
  */

@@ -13,6 +13,15 @@ Built with **Phaser 3** (client), **Colyseus** + **Node.js** (server), **TypeScr
 | `A` / `D` or `←` / `→` | Move |
 | `Space` (or `↑` / `W`) | Jump; press again in the air to double jump |
 | `M` | Mute / unmute |
+| `Esc` (or the cog in the corner) | Settings: sound on/off, music and effects volume, and EXIT GAME |
+
+The keys are read by **physical key** (`event.code`), not by the typed letter or the old `keyCode` number. That is
+why `WASD` keeps working while a Hindi/other input method is on, or on an AZERTY keyboard. (Chrome reports `keyCode`
+229 for every letter while an input method is on; Phaser's own keys go by that number.) If a key ever does not work,
+open the settings: the line "last key" shows what the browser sent.
+
+Sound is **on by default**. Browsers play nothing until the first click or key press, so the sound label says
+"CLICK ANYWHERE TO START" until then. If you turn sound off, that is remembered for your next visit.
 
 1. One player clicks **Create Room** and shares the 6-character room code.
 2. Others click **Join Room** and enter it.
@@ -82,6 +91,9 @@ npm run typecheck
 | `server/test/e2e/game.e2e.ts` | the real UI in Chrome: clicking through menu → lobby → game, sounds, animations, effects |
 | `server/test/e2e/net.e2e.ts` | Chrome playing through a lag proxy: ping chip, prediction vs. a 300 ms round trip, smooth remote players, outages, reload-and-resume, giving up, stale sessions |
 | `server/test/e2e/profile.e2e.ts` | the name box (typing must not reach the game), colour swatches, persistence over a reload, name and colour in the lobby and over the players in the game |
+| `server/test/e2e/settings.e2e.ts` | the settings menu (Esc / cog, no movement behind it, sound button, volume sliders and their persistence, EXIT GAME with its question) and WASD under every key shape a browser can send (keyCode 229, none, Hindi, AZERTY) |
+| `server/test/controls.test.ts` | which physical key an event is, jump once per press, typing and browser shortcuts left alone, keys released on blur |
+| `server/test/e2e/sound.e2e.ts` | sound on for a first visit, the honest label before the first click, an old saved "off" ignored, a new choice remembered, blocked storage |
 | `server/test/e2e/screens.e2e.ts` | the COPY button on a real clipboard (and its fallback), the LEVEL banners and held controls, reloading during a screen, win → ENTER → lobby → a new game in the same room |
 | `server/test/e2e/hosting.e2e.ts` | the client built for another origin (static host) talking to the game server: CORS, WebSocket, joining by code, resume |
 
@@ -196,6 +208,7 @@ What to expect on a free Render server: it goes to sleep when idle (the first vi
 client/            Phaser game (Vite + TypeScript)
   src/scenes/      Menu, Lobby and Game scenes
   src/audio/       synthesised sound effects + music (no asset files)
+  src/input/       the keyboard, read by physical key
   src/net/         prediction, interpolation, ping, session resume, connection overlay
   src/ui/          look of the menu and lobby: theme, icons, buttons, panels (fonts are bundled)
   src/shared/      copy of the server's physics (see "Bad connections")

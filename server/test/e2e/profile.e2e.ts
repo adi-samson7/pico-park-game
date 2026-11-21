@@ -269,6 +269,17 @@ describe("name and colour (real browser)", { skip: skipReason }, () => {
     assert.equal(theirs.name, "aditya k 2", "the name was numbered");
     assert.notEqual(theirs.color, PALETTE[5], "and the colour was not the same");
 
+    // Exactly one player is marked as the host, and it is the one who
+    // created the room (the first row).
+    const badges = await b.eval<{ count: number; sameRow: boolean }>(`(() => {
+      const labels = ${lobby}.children.list.filter((c) => c.type === 'Text' && c.text === 'HOST');
+      const me = ${lobby}.playerTexts.get(${lobby}.room.sessionId);
+      return { count: labels.length, sameRow: labels.length === 1 && labels[0].y === me.y };
+    })()`);
+
+    assert.equal(badges.count, 1, "one HOST badge");
+    assert.equal(badges.sameRow, true, "on the host's row");
+
     // the roster on screen names them both
     const texts = await b.eval<string[]>(
       `${lobby}.children.list.filter((c) => c.type === 'Text').map((c) => c.text)`

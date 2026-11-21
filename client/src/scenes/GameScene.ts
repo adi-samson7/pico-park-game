@@ -3,6 +3,12 @@ import { Room } from "@colyseus/sdk";
 
 import { audio } from "../audio/AudioManager";
 
+import { controls } from "../input/Controls";
+
+import { SettingsPanel } from "../ui/SettingsPanel";
+
+import { UiButton } from "../ui/UiButton";
+
 import { ConnectionHud } from "../net/ConnectionHud";
 
 import {
@@ -21,7 +27,6 @@ import { tabSession } from "../net/session";
 import { formatTime } from "../format";
 
 import {
-  addMuteButton,
   burst,
   confettiBurst,
   confettiRain,
@@ -316,26 +321,11 @@ export class GameScene extends Phaser.Scene {
   // INPUT
   // ========================================
 
-  private cursors!:
-    Phaser.Types.Input.Keyboard.CursorKeys;
+  // The in-game settings menu (Esc or the cog).
+  private settings!: SettingsPanel;
 
-  private keys!: {
-
-    A:
-      Phaser.Input.Keyboard.Key;
-
-    D:
-      Phaser.Input.Keyboard.Key;
-
-    W:
-      Phaser.Input.Keyboard.Key;
-
-    SPACE:
-      Phaser.Input.Keyboard.Key;
-
-    ENTER:
-      Phaser.Input.Keyboard.Key;
-  };
+  private stopEscape: (() => void) | null =
+    null;
 
   // ========================================
   // WORLD
@@ -579,11 +569,7 @@ export class GameScene extends Phaser.Scene {
         }
       );
 
-    addMuteButton(
-      this,
-      20,
-      76
-    );
+    this.createSettings();
 
     audio.playMusic(
       "game"
@@ -616,38 +602,76 @@ export class GameScene extends Phaser.Scene {
   // INPUT
   // ========================================
 
+  // The keys come from `controls` (the physical keys), not
+  // from Phaser's keys, which go by `keyCode` and then fail
+  // for the letters while an input method is on (Chrome).
+
   private createInput() {
 
-    this.cursors =
-      this.input.keyboard!.createCursorKeys();
+    // forget what was pressed before this scene
+    controls.setGameInput(true);
 
-    this.keys = {
+    controls.consumeJump();
 
-      A:
-        this.input.keyboard!.addKey(
-          Phaser.Input.Keyboard.KeyCodes.A
-        ),
+    controls.consumePress("Enter");
 
-      D:
-        this.input.keyboard!.addKey(
-          Phaser.Input.Keyboard.KeyCodes.D
-        ),
+    const stopEscape =
+      controls.onPress(
+        "Escape",
+        () => this.settings?.toggle()
+      );
 
-      W:
-        this.input.keyboard!.addKey(
-          Phaser.Input.Keyboard.KeyCodes.W
-        ),
+    // M mutes (the sound settings are in the menu)
+    const stopMute =
+      controls.onPress(
+        "KeyM",
+        () => {
 
-      SPACE:
-        this.input.keyboard!.addKey(
-          Phaser.Input.Keyboard.KeyCodes.SPACE
-        ),
+          audio.toggleMute();
 
-      ENTER:
-        this.input.keyboard!.addKey(
-          Phaser.Input.Keyboard.KeyCodes.ENTER
-        )
+          audio.sfx("click");
+        }
+      );
+
+    this.stopEscape = () => {
+
+      stopEscape();
+
+      stopMute();
     };
+  }
+
+  // The cog under the sound button, and the menu it opens.
+
+  private createSettings() {
+
+    this.settings =
+      new SettingsPanel(
+        this,
+        () => this.returnToMenu(true)
+      );
+
+    const cog =
+      new UiButton(
+        this,
+        {
+          x: 42,
+          y: 82,
+          width: 44,
+          height: 30,
+          label: "",
+          icon: "gear",
+          variant: "neutral",
+          radius: 8
+        }
+      );
+
+    cog.setDepth(60);
+
+    cog.on(
+      "pointerdown",
+      () => this.settings.toggle()
+    );
   }
 
   // ========================================
@@ -736,6 +760,12 @@ export class GameScene extends Phaser.Scene {
           align:
             "center",
 
+          // Never wider than the screen: a long line wraps.
+          wordWrap: {
+            width: 740,
+            useAdvancedWrap: true
+          },
+
           stroke:
             "#000000",
 
@@ -754,7 +784,7 @@ export class GameScene extends Phaser.Scene {
       this.add.text(
         400,
         572,
-        "A/D or ←/→ move  |  SPACE jump (twice = double jump)  |  stack up  |  avoid spikes & pits",
+        "A/D or ←/→ move  |  SPACE jump (twice = double jump)  |  ESC settings  |  avoid spikes",
         {
           fontSize:
             "13px",
@@ -1919,7 +1949,7 @@ export class GameScene extends Phaser.Scene {
         );
 
         this.showPersistentMessage(
-          "YOU WIN!\n\nALL LEVELS COMPLETE\n\nPress ENTER to go back to the lobby"
+          "YOU WIN!\n\nALL LEVELS COMPLETE\n\nPress ENTER for the lobby"
         );
 
         this.statusText.setText(
@@ -3987,12 +4017,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     const left =
-      this.cursors.left.isDown ||
-      this.keys.A.isDown;
+      controls.left;
 
     const right =
-      this.cursors.right.isDown ||
-      this.keys.D.isDown;
+      controls.right;
 
     // IMPORTANT:
     // JustDown means one jump event
@@ -4002,22 +4030,13 @@ export class GameScene extends Phaser.Scene {
     // is jump #1 or jump #2.
 
     const jump =
-      Phaser.Input.Keyboard.JustDown(
-        this.keys.SPACE
-      ) ||
-      Phaser.Input.Keyboard.JustDown(
-        this.cursors.up
-      ) ||
-      Phaser.Input.Keyboard.JustDown(
-        this.keys.W
-      );
+      controls.consumeJump();
 
     if (this.gameFinished) {
 
       if (
-        Phaser.Input.Keyboard.JustDown(
-          this.keys.ENTER
-        )
+        controls.consumePress("Enter") &&
+        !this.settings.isOpen
       ) {
 
         this.returnToLobby();
@@ -4135,6 +4154,14 @@ export class GameScene extends Phaser.Scene {
     this.hud?.dispose();
 
     this.hud = null;
+
+    this.stopEscape?.();
+
+    this.stopEscape = null;
+
+    this.settings?.destroy();
+
+    controls.setGameInput(true);
 
     for (
       const item

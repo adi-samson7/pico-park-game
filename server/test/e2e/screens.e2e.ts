@@ -527,6 +527,13 @@ describe("room code copy button and level screens (real browser)", { skip: skipR
 
     assert.match(await b.eval<string>(`${game}.messageText.text`), /YOU WIN[\s\S]*lobby/);
 
+    // None of it runs off the edge of the screen.
+    const fit = await b.eval<{ left: number; right: number }>(
+      `(() => { const r = ${game}.messageText.getBounds(); return { left: r.left, right: r.right }; })()`
+    );
+
+    assert.ok(fit.left >= 0 && fit.right <= 800, `the win text spans ${Math.round(fit.left)}..${Math.round(fit.right)} of 800`);
+
     await b.tap("Enter", "Enter");
 
     await until(() => b.eval(`${lobby}.sys.isActive() && ${lobby}.players.size === 2`), "back in the lobby");

@@ -16,6 +16,8 @@ export type IconName =
   | "copy"
   | "person"
   | "star"
+  | "crown"
+  | "gear"
   | "speaker"
   | "pencil"
   | "chevron";
@@ -215,6 +217,67 @@ export function drawIcon(
       }
 
       poly(g, points, true);
+
+      break;
+    }
+
+    // a crown: three points on a band
+    case "crown": {
+
+      poly(
+        g,
+        [
+          [-s * 0.95, s * 0.6],
+          [-s * 0.95, -s * 0.55],
+          [-s * 0.4, s * 0.05],
+          [0, -s * 0.8],
+          [s * 0.4, s * 0.05],
+          [s * 0.95, -s * 0.55],
+          [s * 0.95, s * 0.6]
+        ],
+        true
+      );
+
+      break;
+    }
+
+    // a cog: eight teeth round a hub
+    case "gear": {
+
+      const teeth = 8;
+
+      const outline: Phaser.Math.Vector2[] = [];
+
+      for (let i = 0; i < teeth; i++) {
+
+        const angle =
+          (i * Math.PI * 2) / teeth;
+
+        const half =
+          (Math.PI / teeth) * 0.42;
+
+        for (
+          const [offset, radius]
+          of [
+            [-half * 1.7, s * 0.7],
+            [-half, s],
+            [half, s],
+            [half * 1.7, s * 0.7]
+          ] as const
+        ) {
+
+          outline.push(
+            new Phaser.Math.Vector2(
+              Math.cos(angle + offset) * radius,
+              Math.sin(angle + offset) * radius
+            )
+          );
+        }
+      }
+
+      g.strokePoints(outline, true, true);
+
+      g.strokeCircle(0, 0, s * 0.3);
 
       break;
     }

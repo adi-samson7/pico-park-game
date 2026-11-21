@@ -161,6 +161,12 @@ describe("browser end-to-end (production build)", { skip: skipReason }, () => {
 
     assert.ok(pictures >= 5, `backdrop and four mascots (${pictures} pictures)`);
 
+    // Sixteen translucent blocks drift upwards, turning as they go
+    // (two animations each), plus the title dropping in.
+    const tweens = await b.eval<number>(`${scene("MenuScene")}.tweens.getTweens().length`);
+
+    assert.ok(tweens >= 20, `drifting blocks and the title animate (${tweens} tweens)`);
+
     await until(
       async () => (await b.eval<number>(`${scene("MenuScene")}.tweens.getTweens().length`)) >= 1,
       "something animates (the mascots start hopping)",
@@ -400,12 +406,12 @@ describe("browser end-to-end (production build)", { skip: skipReason }, () => {
     await b.tap("KeyM", "m");
 
     assert.equal(await b.eval("window.__audio.isMuted"), true);
-    assert.equal(await b.eval("localStorage.getItem('pico.muted')"), "1");
+    assert.equal(await b.eval("localStorage.getItem('pico.muted.v2')"), "1");
 
     await b.tap("KeyM", "m");
 
     assert.equal(await b.eval("window.__audio.isMuted"), false);
-    assert.equal(await b.eval("localStorage.getItem('pico.muted')"), "0");
+    assert.equal(await b.eval("localStorage.getItem('pico.muted.v2')"), "0");
   });
 
   // ==========================================

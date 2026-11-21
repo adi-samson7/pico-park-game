@@ -25,6 +25,7 @@ import {
 
 import {
   addBackground,
+  addDriftingBlocks,
   addPillHeading,
   addTitle,
   drawPanel
@@ -227,6 +228,8 @@ export class LobbyScene extends Phaser.Scene {
 
     addBackground(this);
 
+    addDriftingBlocks(this);
+
     this.events.once(
       Phaser.Scenes.Events.SHUTDOWN,
       () => this.teardown()
@@ -387,7 +390,7 @@ export class LobbyScene extends Phaser.Scene {
         this.add.text(
           0,
           428,
-          "host - click your colour or name to change them",
+          "the host starts the game  ·  click your colour or name to change them",
           {
             fontSize: "13px",
             color: COLOR.textDim
@@ -411,9 +414,9 @@ export class LobbyScene extends Phaser.Scene {
 
       drawIcon(
         star,
-        "star",
+        "crown",
         iconSize,
-        0x8a90b4
+        0xc9a64a
       );
 
       hint.setX(
@@ -1554,11 +1557,6 @@ export class LobbyScene extends Phaser.Scene {
           player.playerIndex
         );
 
-      if (isHost) {
-        playerName +=
-          " ★";
-      }
-
       if (isMe) {
         playerName +=
           " (you)";
@@ -1594,6 +1592,65 @@ export class LobbyScene extends Phaser.Scene {
           "pointerdown",
           () => this.askForName()
         );
+      }
+
+      // The host (the one who starts the game) wears a badge.
+
+      if (isHost) {
+
+        const label =
+          this.add.text(
+            0,
+            y,
+            "HOST",
+            {
+              fontSize: "12px",
+              fontStyle: "bold",
+              color: COLOR.amber_
+            }
+          ).setOrigin(0, 0.5);
+
+        const left =
+          COL_NAME + text.width + 14;
+
+        const badgeWidth =
+          8 + 13 + 6 + label.width + 9;
+
+        label.setX(left + 8 + 13 + 6);
+
+        const badge =
+          this.add.graphics();
+
+        drawPanel(
+          badge,
+          left + badgeWidth / 2,
+          y,
+          badgeWidth,
+          22,
+          {
+            fill: 0x4d3f17,
+            stroke: COLOR.amber,
+            strokeWidth: 1,
+            radius: 7
+          }
+        );
+
+        badge.setDepth(label.depth - 0.5);
+
+        const crown =
+          this.add.graphics()
+            .setPosition(left + 8 + 6.5, y);
+
+        drawIcon(
+          crown,
+          "crown",
+          13,
+          COLOR.amber
+        );
+
+        crown.setDepth(label.depth);
+
+        extras.push(badge, label, crown);
       }
 
       // the status, in a pill

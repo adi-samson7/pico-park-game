@@ -26,6 +26,7 @@ import {
 
 import {
   addBackground,
+  addDriftingBlocks,
   addTitle,
   drawPanel
 } from "../ui/draw";
@@ -109,6 +110,8 @@ export class MenuScene extends Phaser.Scene {
     // ----------------------------------------
 
     addBackground(this);
+
+    addDriftingBlocks(this);
 
     this.createFloor();
 

@@ -12,6 +12,7 @@ import { MenuScene } from "./scenes/MenuScene";
 import { LobbyScene } from "./scenes/LobbyScene";
 import { GameScene } from "./scenes/GameScene";
 import { audio } from "./audio/AudioManager";
+import { controls } from "./input/Controls";
 import { FONT_BODY } from "./ui/theme";
 
 // Every piece of text uses the monospace unless it asks for
@@ -112,6 +113,9 @@ const config:
 
 await fontsReady();
 
+// The keyboard, read by physical key (see input/Controls.ts).
+controls.attach(window);
+
 const game =
   new Phaser.Game(
     config
@@ -133,7 +137,8 @@ if (
     window,
     {
       __pico: game,
-      __audio: audio
+      __audio: audio,
+      __controls: controls
     }
   );
 }
