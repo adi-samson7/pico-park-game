@@ -1552,6 +1552,23 @@ export class GameRoom extends Room {
         this.roomCode
       );
     }
+
+    // A seat held for a player who dropped has a timer of
+    // its own (set by allowReconnection) that outlives the
+    // room: it would keep the whole process alive until it
+    // ran out (up to the reconnect window after a shutdown).
+    // Nobody can come back to a disposed room, so stop them.
+
+    const held =
+      (this as unknown as {
+        _reservedSeatTimeouts?:
+          Record<string, ReturnType<typeof setTimeout>>;
+      })._reservedSeatTimeouts;
+
+    for (const timer of Object.values(held ?? {})) {
+
+      clearTimeout(timer);
+    }
   }
 
   // ==========================================
