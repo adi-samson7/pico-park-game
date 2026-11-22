@@ -45,7 +45,7 @@ jobs:
           code=$?
           if [ $code -ne 0 ]; then
             body=$(grep -nE "^(not ok|# fail)|✖|failing tests" test.log | head -c 1500)
-            tail_part=$(sed -n '/failing tests:/,$p' test.log | head -c 6000)
+            tail_part=$(grep -n -B2 -A45 "^not ok [0-9]* - test/" test.log | head -c 12000)
             msg="${body}
           ${tail_part}"
             msg="${msg//'%'/'%25'}"
