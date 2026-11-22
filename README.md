@@ -1,5 +1,6 @@
 # Pico Co-op
 
+![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![Node](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
 ![Phaser](https://img.shields.io/badge/Phaser-3.90-8c52ff)
@@ -29,6 +30,7 @@ crystals, and must get **every** player through the exit door to clear three lev
 - [Deployment](#deployment)
 - [Testing](#testing)
 - [Project layout](#project-layout)
+- [License](#license)
 
 ## Features
 
@@ -296,3 +298,7 @@ server/                Colyseus game server (Node + TypeScript)
 docs/screenshots/      images used in this README
 Dockerfile, render.yaml, .github/workflows/ci.yml
 ```
+
+## License
+
+Released under the [MIT License](LICENSE).

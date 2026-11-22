@@ -2,6 +2,7 @@
   "name": "pico-coop",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "description": "Pico Co-op: a browser-based multiplayer co-op platformer (Phaser + Colyseus).",
   "engines": {
     "node": ">=22"
