@@ -39,21 +39,7 @@ jobs:
         run: npm --prefix server run typecheck
 
       - name: Unit and integration tests
-        run: |
-          set +e
-          npm --prefix server test > test.log 2>&1
-          code=$?
-          if [ $code -ne 0 ]; then
-            body=$(grep -nE "^(not ok|# fail)|✖|failing tests" test.log | head -c 1500)
-            tail_part=$(grep -n -B2 -A45 "^not ok [0-9]* - test/" test.log | head -c 12000)
-            msg="${body}
-          ${tail_part}"
-            msg="${msg//'%'/'%25'}"
-            msg="${msg//$'\n'/'%0A'}"
-            msg="${msg//$'\r'/'%0D'}"
-            echo "::error title=unit tests::${msg}"
-          fi
-          exit $code
+        run: npm --prefix server test
 
       - name: Build server
         run: npm --prefix server run build
