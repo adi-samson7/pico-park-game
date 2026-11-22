@@ -29,7 +29,6 @@ crystals, and must get **every** player through the exit door to clear three lev
 - [Deployment](#deployment)
 - [Testing](#testing)
 - [Project layout](#project-layout)
-- [Troubleshooting](#troubleshooting)
 
 ## Features
 
@@ -297,21 +296,3 @@ server/                Colyseus game server (Node + TypeScript)
 docs/screenshots/      images used in this README
 Dockerfile, render.yaml, .github/workflows/ci.yml
 ```
-
-## Troubleshooting
-
-**A movement key does nothing (Chrome).** Open the settings (`Esc`), press the key, and look at the "last key" line.
-- *It does not change:* something intercepts the key before the page. Browser extensions are the usual cause; for
-  example, video-speed extensions bind `S`, `D` and `A` and show a round speed badge in the corner. Disable the extension
-  for this site, or try an Incognito window.
-- *It shows `KeyD ... keyCode 229`:* an input method is active. The game reads the physical key (`event.code`), so this
-  works; Phaser's own keys, which go by `keyCode`, did not.
-
-**No sound.** Browsers play nothing until the first click or key press; the label says "CLICK ANYWHERE TO START" until
-then. Check the sound button and the volume sliders in the settings.
-
-**"Create room" fails on a deployed client.** The client was built without a reachable `VITE_SERVER_URL`, or the game
-server is asleep (free hosts) or not allowing WebSockets. Check `https://<server>/health`.
-
-**Players cannot find a room.** Room codes live in one server's memory; make sure only one instance is running and the
-server was not restarted since the room was created.
